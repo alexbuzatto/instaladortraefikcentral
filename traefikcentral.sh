@@ -35,6 +35,20 @@ info()      { echo -e "  ${WHITE}ℹ $1${NC}"; }
 separador() { echo -e "${BLUE}----------------------------------------------------------------${NC}"; }
 pausar()    { echo -e "\n${YELLOW}Pressione ENTER para continuar...${NC}"; read -r < /dev/tty; }
 
+verificar_logs_recentes() {
+    local LINES="${1:-10}"
+    echo -e "\n${CYAN}📄 ÚLTIMOS LOGS DO TRAEFIK CENTRAL (L${LINES}):${NC}"
+    separador
+    if docker stack ls 2>/dev/null | grep -q "traefik-central"; then
+        docker service logs --tail "$LINES" traefik-central_traefik 2>/dev/null || warn "Não foi possível ler logs do serviço."
+    elif docker ps --format '{{.Names}}' 2>/dev/null | grep -q "traefik-central"; then
+        docker logs --tail "$LINES" traefik-central 2>/dev/null || warn "Não foi possível ler logs do container."
+    else
+        warn "Instalação do Traefik Central não encontrada para ler logs."
+    fi
+    separador
+}
+
 # ============================================================================
 # ROOT
 # ============================================================================
