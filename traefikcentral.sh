@@ -187,10 +187,10 @@ menu_remocao() {
         1) remover_stack "traefik-central" ;;
         2)
             docker stack ls 2>/dev/null || true
-            read -p "Nome da stack: " NS; remover_stack "$NS" ;;
+            read -p "Nome da stack: " NS < /dev/tty; remover_stack "$NS" ;;
         3)
             docker ps -a --filter "name=traefik" --format "{{.Names}} | {{.Status}}" 2>/dev/null || true
-            read -p "Nome do container: " NC_REM; remover_container "$NC_REM" ;;
+            read -p "Nome do container: " NC_REM < /dev/tty; remover_container "$NC_REM" ;;
         4) remover_tudo ;;
         5) remover_binario_systemd ;;
         0) return ;;
@@ -1070,7 +1070,7 @@ selecionar_servidor() {
     local i=1
     for srv in "${SRV_ARRAY[@]}"; do
         # Pegar domínios do servidor
-        DOMS=$(awk "/^    ${srv}-https:/{found=1} found && /rule:/{print; exit}" "$SERVERS_FILE" | grep -oP "(?<=HostSNI\().*(?=\))" | tr -d '\`' || echo "")
+        DOMS=$(awk "/^    ${srv}-https:/{found=1} found && /rule:/{print; exit}" "$SERVERS_FILE" | grep -oP "(?<=HostSNI\().*(?=\))" | tr -d '\`' | sed 's/ || HostSNI(/ /g' || echo "")
         echo -e "  ${CYAN}${i})${NC} ${WHITE}${srv}${NC}"
         [ -n "$DOMS" ] && echo -e "     ${BLUE}↳ ${DOMS}${NC}"
         i=$((i+1))
@@ -1250,43 +1250,7 @@ PYUPDATE
     verificar_logs_recentes 6
 }
 
-# ============================================================================
-# SELECIONAR SERVIDOR (menu numerado reutilizável)
-# ============================================================================
-selecionar_servidor() {
-    local SERVERS_FILE="/root/traefik-central/dynamic-config/servers.yml"
-    local MSG="${1:-Selecione o servidor:}"
 
-    ROUTERS=$(grep -E "^    [a-zA-Z0-9_-]+-https:" "$SERVERS_FILE" 2>/dev/null | sed 's/://g' | sed 's/^[[:space:]]*//' | sed 's/-https$//' || true)
-
-    if [ -z "$ROUTERS" ]; then
-        warn "Nenhum servidor configurado ainda."
-        SERVER_NAME_SEL=""
-        return 1
-    fi
-
-    mapfile -t SRV_ARRAY <<< "$ROUTERS"
-
-    echo -e "\n  ${YELLOW}${MSG}${NC}\n"
-    local i=1
-    for srv in "${SRV_ARRAY[@]}"; do
-        DOMS=$(awk "/^    ${srv}-https:/{found=1} found && /rule:/{print; exit}" "$SERVERS_FILE" | grep -oP "(?<=HostSNI\().*(?=\))" | tr -d '\`' | sed 's/ || HostSNI(/ /g' || echo "")
-        echo -e "  ${CYAN}${i})${NC} ${WHITE}${srv}${NC}"
-        [ -n "$DOMS" ] && echo -e "     ${BLUE}↳ ${DOMS}${NC}"
-        i=$((i+1))
-    done
-    echo -e "  ${CYAN}0)${NC} Cancelar\n"
-
-    while true; do
-        read -p "  Escolha [1-$((i-1))]: " SEL
-        [ "$SEL" = "0" ] && { SERVER_NAME_SEL=""; return 1; }
-        [[ "$SEL" =~ ^[0-9]+$ ]] && [ "$SEL" -ge 1 ] && [ "$SEL" -le "${#SRV_ARRAY[@]}" ] && break
-        erro "Opção inválida."
-    done
-
-    SERVER_NAME_SEL="${SRV_ARRAY[$((SEL-1))]}"
-    ok "Servidor selecionado: ${SERVER_NAME_SEL}"
-}
 
 # ============================================================================
 # REMOVER DOMÍNIO DE SERVIDOR EXISTENTE
