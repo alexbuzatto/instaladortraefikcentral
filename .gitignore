@@ -1,0 +1,16 @@
+# Agent Metadata
+.agent/
+.agents/
+.claude/
+.codebuddy/
+.gemini/
+_bmad/
+
+# Binaries
+*.exe
+Antigravity
+
+# Logs and Temps
+*.log
+*.bak
+/tmp/
