@@ -1049,7 +1049,7 @@ adicionar_servidor() {
 
     step "Verificando logs..."
     sleep 4
-    LOGS=$(docker service logs traefik-central_traefik-central --tail 10 2>/dev/null || true)
+    LOGS=$(docker service logs traefik-central_traefik-central --tail 15 2>/dev/null | grep -v "use of closed network connection" || true)
     if echo "$LOGS" | grep -q "ERR"; then
         erro "Erros detectados:"
         echo "$LOGS" | grep "ERR"
