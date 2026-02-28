@@ -33,7 +33,7 @@ warn()      { echo -e "  ${YELLOW}⚠ $1${NC}"; }
 erro()      { echo -e "  ${RED}✖ $1${NC}"; }
 info()      { echo -e "  ${WHITE}ℹ $1${NC}"; }
 separador() { echo -e "${BLUE}----------------------------------------------------------------${NC}"; }
-pausar()    { echo -e "\n${YELLOW}Pressione ENTER para continuar...${NC}"; read -r; }
+pausar()    { echo -e "\n${YELLOW}Pressione ENTER para continuar...${NC}"; read -r < /dev/tty; }
 
 # ============================================================================
 # ROOT
@@ -181,7 +181,7 @@ menu_remocao() {
     echo -e "  ${CYAN}4)${NC} Remover TUDO (stacks + containers + redes + volumes + imagens)"
     echo -e "  ${CYAN}5)${NC} Remover binário + systemd"
     echo -e "  ${CYAN}0)${NC} Voltar\n"
-    read -p "Escolha: " OPCAO_REMOVE
+    read -p "Escolha: " OPCAO_REMOVE < /dev/tty
 
     case "$OPCAO_REMOVE" in
         1) remover_stack "traefik-central" ;;
@@ -200,11 +200,11 @@ menu_remocao() {
 
 remover_stack() {
     local STACK="$1"
-    read -p "Remover stack '$STACK'? Digite 'sim': " C
+    read -p "Remover stack '$STACK'? Digite 'sim': " C < /dev/tty
     if [ "$C" = "sim" ]; then
         docker stack rm "$STACK" 2>/dev/null && ok "Stack removida" || erro "Não encontrada"
         sleep 8
-        read -p "Remover redes e volumes relacionados? (s/N): " RE
+        read -p "Remover redes e volumes relacionados? (s/N): " RE < /dev/tty
         if [[ "$RE" =~ ^[Ss]$ ]]; then
             docker network ls --format "{{.Name}}" | grep -i traefik | xargs -r docker network rm 2>/dev/null && ok "Redes removidas" || warn "Nenhuma rede"
             docker volume ls --format "{{.Name}}" | grep -i traefik | xargs -r docker volume rm 2>/dev/null && ok "Volumes removidos" || warn "Nenhum volume"
@@ -216,13 +216,13 @@ remover_stack() {
 }
 
 remover_container() {
-    read -p "Remover container '$1'? Digite 'sim': " C
+    read -p "Remover container '$1'? Digite 'sim': " C < /dev/tty
     [ "$C" = "sim" ] && { docker stop "$1" 2>/dev/null || true; docker rm "$1" 2>/dev/null && ok "Removido!" || erro "Erro"; } || warn "Cancelado."
 }
 
 remover_tudo() {
     echo -e "\n${RED}${BOLD}Remove TUDO com 'traefik' no nome. Outros serviços NÃO são afetados.${NC}"
-    read -p "Digite 'REMOVER TUDO' para confirmar: " C
+    read -p "Digite 'REMOVER TUDO' para confirmar: " C < /dev/tty
     if [ "$C" = "REMOVER TUDO" ]; then
         docker stack ls 2>/dev/null | grep -i traefik | awk '{print $1}' | xargs -r docker stack rm 2>/dev/null && ok "Stacks removidas" || warn "Nenhuma"
         sleep 10
@@ -238,7 +238,7 @@ remover_tudo() {
 }
 
 remover_binario_systemd() {
-    read -p "Remover binário + systemd? Digite 'sim': " C
+    read -p "Remover binário + systemd? Digite 'sim': " C < /dev/tty
     if [ "$C" = "sim" ]; then
         systemctl stop traefik 2>/dev/null && ok "Parado" || warn "Não estava ativo"
         systemctl disable traefik 2>/dev/null && ok "Desabilitado" || true
@@ -301,23 +301,23 @@ coletar_configuracoes() {
     echo -e "${CYAN}  Ele precisa de um domínio próprio (diferente dos servidores de destino).${NC}\n"
 
     while true; do
-        read -p "  Domínio do dashboard (ex: traefik-central.seudominio.com): " DASH_DOMAIN
+        read -p "  Domínio do dashboard (ex: traefik-central.seudominio.com): " DASH_DOMAIN < /dev/tty
         [ -n "$DASH_DOMAIN" ] && break
         erro "Domínio não pode ser vazio."
     done
 
     while true; do
-        read -p "  Email para Let's Encrypt: " EMAIL
+        read -p "  Email para Let's Encrypt: " EMAIL < /dev/tty
         [[ "$EMAIL" == *"@"* ]] && break
         erro "Email inválido."
     done
 
-    read -p "  Usuário do dashboard [admin]: " DASH_USER
+    read -p "  Usuário do dashboard [admin]: " DASH_USER < /dev/tty
     DASH_USER="${DASH_USER:-admin}"
 
     while true; do
-        read -s -p "  Senha do dashboard: " DASH_PASS; echo
-        read -s -p "  Confirme a senha: " DASH_PASS_CONF; echo
+        read -s -p "  Senha do dashboard: " DASH_PASS < /dev/tty; echo
+        read -s -p "  Confirme a senha: " DASH_PASS_CONF < /dev/tty; echo
         [ "$DASH_PASS" = "$DASH_PASS_CONF" ] && [ -n "$DASH_PASS" ] && break
         erro "Senhas não conferem ou vazias."
     done
@@ -348,7 +348,7 @@ coletar_configuracoes() {
         SERVER_COUNT=$((SERVER_COUNT + 1))
         echo -e "${BLUE}  --- Servidor $SERVER_COUNT ---${NC}"
 
-        read -p "  Nome do servidor (ex: srv1) [vazio para parar]: " SERVER_NAME
+        read -p "  Nome do servidor (ex: srv1) [vazio para parar]: " SERVER_NAME < /dev/tty
         if [ -z "$SERVER_NAME" ]; then
             SERVER_COUNT=$((SERVER_COUNT - 1))
             break
@@ -362,22 +362,22 @@ coletar_configuracoes() {
 
         echo -e "  ${CYAN}IP do servidor (privado se estiver na mesma LAN, público se for externo):${NC}"
         while true; do
-            read -p "  IP do servidor: " SERVER_IP
+            read -p "  IP do servidor: " SERVER_IP < /dev/tty
             [[ "$SERVER_IP" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] && break
             erro "IP inválido. Formato: 192.168.25.102 ou 1.2.3.4"
         done
 
-        read -p "  Porta HTTPS [443]: " SERVER_PORT_HTTPS
+        read -p "  Porta HTTPS [443]: " SERVER_PORT_HTTPS < /dev/tty
         SERVER_PORT_HTTPS="${SERVER_PORT_HTTPS:-443}"
 
-        read -p "  Porta HTTP [80]: " SERVER_PORT_HTTP
+        read -p "  Porta HTTP [80]: " SERVER_PORT_HTTP < /dev/tty
         SERVER_PORT_HTTP="${SERVER_PORT_HTTP:-80}"
 
         echo -e "  ${CYAN}Domínios que este servidor atende (vírgula, sem espaços):${NC}"
         echo -e "  ${WHITE}Ex: painel.eclicksolucoes.com.br,unichat.eclicksolucoes.com.br,traefik.eclicksolucoes.com.br${NC}"
 
         while true; do
-            read -p "  Domínios: " DOMAINS
+            read -p "  Domínios: " DOMAINS < /dev/tty
             DOMAINS=$(echo "$DOMAINS" | tr -d ' ')
             [ -n "$DOMAINS" ] && break
             erro "Informe pelo menos um domínio."
@@ -442,7 +442,7 @@ coletar_configuracoes() {
         SERVERS_SUMMARY="${SERVERS_SUMMARY}\n  • ${SERVER_NAME}: ${DOMAINS} → ${SERVER_IP}"
         echo
 
-        read -p "  Adicionar outro servidor? (s/N): " CONTINUE
+        read -p "  Adicionar outro servidor? (s/N): " CONTINUE < /dev/tty
         [[ "$CONTINUE" =~ ^[Ss]$ ]] || break
     done
 }
@@ -922,7 +922,7 @@ adicionar_servidor() {
 
     # Nome do servidor
     while true; do
-        read -p "  Nome do servidor (ex: srv2): " SERVER_NAME
+        read -p "  Nome do servidor (ex: srv2): " SERVER_NAME < /dev/tty
         [ -z "$SERVER_NAME" ] && { erro "Nome não pode ser vazio."; continue; }
         [[ ! "$SERVER_NAME" =~ ^[a-zA-Z0-9_-]+$ ]] && { erro "Use apenas letras, números, - e _"; continue; }
         grep -q "^    ${SERVER_NAME}-https:" "$SERVERS_FILE" 2>/dev/null && { erro "Servidor '$SERVER_NAME' já existe!"; continue; }
@@ -932,15 +932,15 @@ adicionar_servidor() {
     # IP
     echo -e "  ${CYAN}IP do servidor (privado se mesma LAN, público se externo):${NC}"
     while true; do
-        read -p "  IP do servidor: " SERVER_IP
+        read -p "  IP do servidor: " SERVER_IP < /dev/tty
         [[ "$SERVER_IP" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] && break
         erro "IP inválido. Formato: 192.168.25.102"
     done
 
-    read -p "  Porta HTTPS [443]: " SERVER_PORT_HTTPS
+    read -p "  Porta HTTPS [443]: " SERVER_PORT_HTTPS < /dev/tty
     SERVER_PORT_HTTPS="${SERVER_PORT_HTTPS:-443}"
 
-    read -p "  Porta HTTP [80]: " SERVER_PORT_HTTP
+    read -p "  Porta HTTP [80]: " SERVER_PORT_HTTP < /dev/tty
     SERVER_PORT_HTTP="${SERVER_PORT_HTTP:-80}"
 
     # Coletar domínios por domínio base
@@ -952,7 +952,7 @@ adicionar_servidor() {
     while true; do
         # Pedir domínio base
         while true; do
-            read -p "  Domínio base (ex: eclicksolucoes.com.br): " BASE_DOMAIN
+            read -p "  Domínio base (ex: eclicksolucoes.com.br): " BASE_DOMAIN < /dev/tty
             BASE_DOMAIN=$(echo "$BASE_DOMAIN" | tr -d ' ' | tr '[:upper:]' '[:lower:]')
             [[ "$BASE_DOMAIN" =~ \. ]] && break
             erro "Domínio inválido. Ex: eclicksolucoes.com.br"
@@ -964,7 +964,7 @@ adicionar_servidor() {
         echo -e "  ${YELLOW}DICA: Digite '*' para habilitar CURINGA (Catcher/Wildcard).${NC}"
         echo -e "  ${WHITE}Isso repassará QUALQUER subdomínio novo automaticamente para este servidor!${NC}"
         while true; do
-            read -p "  Subdomínios (ou *): " SUBS_INPUT
+            read -p "  Subdomínios (ou *): " SUBS_INPUT < /dev/tty
             [ -n "$SUBS_INPUT" ] && break
             erro "Informe pelo menos um subdomínio ou *."
         done
@@ -983,7 +983,7 @@ adicionar_servidor() {
         done
         echo
 
-        read -p "  Adicionar subdomínios de outro domínio base? (s/N): " MORE_BASE
+        read -p "  Adicionar subdomínios de outro domínio base? (s/N): " MORE_BASE < /dev/tty
         [[ "$MORE_BASE" =~ ^[Ss]$ ]] || break
         echo
     done
@@ -1015,7 +1015,7 @@ adicionar_servidor() {
         echo -e "    ${CYAN}→${NC} $dom"
     done
     echo
-    read -p "  Confirmar? (s/N): " CONF
+    read -p "  Confirmar? (s/N): " CONF < /dev/tty
     [[ "$CONF" =~ ^[Ss]$ ]] || { warn "Cancelado."; return; }
 
     # Fazer backup
@@ -1078,7 +1078,7 @@ selecionar_servidor() {
     echo -e "  ${CYAN}0)${NC} Cancelar\n"
 
     while true; do
-        read -p "  Escolha [1-$((i-1))]: " SEL
+        read -p "  Escolha [1-$((i-1))]: " SEL < /dev/tty
         [ "$SEL" = "0" ] && { SERVER_NAME_SEL=""; return 1; }
         [[ "$SEL" =~ ^[0-9]+$ ]] && [ "$SEL" -ge 1 ] && [ "$SEL" -le "${#SRV_ARRAY[@]}" ] && break
         erro "Opção inválida. Digite um número entre 1 e ${#SRV_ARRAY[@]}."
@@ -1123,7 +1123,7 @@ adicionar_dominio() {
     echo -e "  ${CYAN}${i})${NC} Outro (digitar manualmente)\n"
 
     while true; do
-        read -p "  Escolha [1-${i}]: " SEL_BASE
+        read -p "  Escolha [1-${i}]: " SEL_BASE < /dev/tty
         [[ "$SEL_BASE" =~ ^[0-9]+$ ]] && [ "$SEL_BASE" -ge 1 ] && [ "$SEL_BASE" -le "$i" ] && break
         erro "Opção inválida."
     done
@@ -1132,7 +1132,7 @@ adicionar_dominio() {
     NEW_DOMAINS_LIST=()
     if [ "$SEL_BASE" -eq "$i" ]; then
         while true; do
-            read -p "  Domínio completo (ex: app.outrodominio.com): " FULL_DOMAIN
+            read -p "  Domínio completo (ex: app.outrodominio.com): " FULL_DOMAIN < /dev/tty
             FULL_DOMAIN=$(echo "$FULL_DOMAIN" | tr -d " ")
             [ -n "$FULL_DOMAIN" ] && break
             erro "Domínio não pode ser vazio."
@@ -1144,7 +1144,7 @@ adicionar_dominio() {
         echo -e "  ${WHITE}Ex: n8n unichat evolution${NC} ${BLUE}(separados por espaço)${NC}"
         echo -e "  ${YELLOW}DICA: Digite '*' para Curinga (Catcher de todos subdomínios).${NC}\n"
         while true; do
-            read -p "  Subdomínios (ou *): " SUBDOMAIN_INPUT
+            read -p "  Subdomínios (ou *): " SUBDOMAIN_INPUT < /dev/tty
             [ -n "$SUBDOMAIN_INPUT" ] && break
             erro "Informe pelo menos um subdomínio ou *."
         done
@@ -1191,7 +1191,7 @@ adicionar_dominio() {
     echo -e "\n  ${WHITE}Rule final completa:${NC}"
     for d in "${ALL_FINAL[@]}"; do echo -e "    ${CYAN}→${NC} $d"; done
 
-    read -p "\n  Confirmar? (s/N): " CONF
+    read -p "\n  Confirmar? (s/N): " CONF < /dev/tty
     [[ "$CONF" =~ ^[Ss]$ ]] || { warn "Cancelado."; return; }
 
     cp "$SERVERS_FILE" "${SERVERS_FILE}.bak"
@@ -1324,14 +1324,14 @@ remover_dominio() {
     echo -e "  ${CYAN}0)${NC} Cancelar\n"
 
     while true; do
-        read -p "  Qual remover? [1-$((i-1))]: " SEL_DOM
+        read -p "  Qual remover? [1-$((i-1))]: " SEL_DOM < /dev/tty
         [ "$SEL_DOM" = "0" ] && { warn "Cancelado."; return; }
         [[ "$SEL_DOM" =~ ^[0-9]+$ ]] && [ "$SEL_DOM" -ge 1 ] && [ "$SEL_DOM" -le "${#DOM_ARRAY[@]}" ] && break
         erro "Opção inválida."
     done
 
     local DOM_REMOVER="${DOM_ARRAY[$((SEL_DOM-1))]}"
-    read -p "  Remover '${DOM_REMOVER}'? (s/N): " CONF
+    read -p "  Remover '${DOM_REMOVER}'? (s/N): " CONF < /dev/tty
     [[ "$CONF" =~ ^[Ss]$ ]] || { warn "Cancelado."; return; }
 
     local NEW_SNI="" NEW_HOST=""
@@ -1380,7 +1380,7 @@ remover_servidor() {
     selecionar_servidor "Qual servidor deseja remover?" || return
     SERVER_NAME="$SERVER_NAME_SEL"
 
-    read -p "  Digite 'sim' para confirmar remoção de '${SERVER_NAME}': " CONF
+    read -p "  Digite 'sim' para confirmar remoção de '${SERVER_NAME}': " CONF < /dev/tty
     [ "$CONF" != "sim" ] && { warn "Cancelado."; return; }
 
     cp "$SERVERS_FILE" "${SERVERS_FILE}.bak"
@@ -1426,7 +1426,7 @@ menu_gerenciar_servidores() {
     echo -e "  ${CYAN}3)${NC} Remover domínio de servidor existente"
     echo -e "  ${CYAN}4)${NC} Remover servidor completo"
     echo -e "  ${CYAN}0)${NC} Voltar\n"
-    read -p "Escolha: " OPCAO_SERV
+    read -p "Escolha: " OPCAO_SERV < /dev/tty
 
     case "$OPCAO_SERV" in
         1) criar_script_auxiliar; adicionar_servidor ;;
@@ -1457,7 +1457,7 @@ menu_principal() {
     echo -e "  ${CYAN}6)${NC} ${WHITE}Listar servidores configurados${NC}"
     echo -e "  ${CYAN}0)${NC} ${WHITE}Sair${NC}\n"
     separador
-    read -p "Escolha: " OPCAO_MENU
+    read -p "Escolha: " OPCAO_MENU < /dev/tty
     echo
 }
 
@@ -1475,7 +1475,7 @@ while true; do
             verificar_traefik_existente
             if [ "${TRAEFIK_ENCONTRADO:-false}" = true ]; then
                 echo -e "\n${YELLOW}⚠ Traefik detectado neste servidor.${NC}"
-                read -p "Continuar com a instalação mesmo assim? (s/N): " CONT
+                read -p "Continuar com a instalação mesmo assim? (s/N): " CONT < /dev/tty
                 [[ "$CONT" =~ ^[Ss]$ ]] || { warn "Cancelado."; pausar; continue; }
             fi
             pausar
