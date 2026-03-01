@@ -448,7 +448,7 @@ coletar_configuracoes() {
       entryPoints:
         - web
       service: ${SERVER_NAME}-http-svc
-      priority: 10
+      priority: 100
 "
         SERVICES_HTTP_CONFIG="${SERVICES_HTTP_CONFIG}
     ${SERVER_NAME}-http-svc:
@@ -660,7 +660,7 @@ EOF
 #       rule: "Host(`app.dominio.com`)"
 #       entryPoints: [web]
 #       service: srv1-http-svc
-#       priority: 10
+#       priority: 100
 #   services:
 #     srv1-http-svc:
 #       loadBalancer:
@@ -695,7 +695,7 @@ rule_http  = sys.argv[7]
 
 r_tcp  = f"\n    {name}-https:\n      rule: \"{rule_tcp}\"\n      entryPoints:\n        - websecure\n      service: {name}-https-svc\n      tls:\n        passthrough: true\n"
 s_tcp  = f"\n    {name}-https-svc:\n      loadBalancer:\n        servers:\n          - address: \"{ip}:{port_https}\"\n"
-r_http = f"\n    {name}-http:\n      rule: \"{rule_http}\"\n      entryPoints:\n        - web\n      service: {name}-http-svc\n      priority: 10\n"
+r_http = f"\n    {name}-http:\n      rule: \"{rule_http}\"\n      entryPoints:\n        - web\n      service: {name}-http-svc\n      priority: 100\n"
 s_http = f"\n    {name}-http-svc:\n      loadBalancer:\n        passHostHeader: true\n        servers:\n          - url: \"http://{ip}:{port_http}\"\n"
 
 with open(filepath, "r") as f:
@@ -1045,8 +1045,11 @@ adicionar_servidor() {
         
         if [[ "$dom" == \*.* ]]; then
             base=${dom#*.}
-            RULE_TCP="${RULE_TCP}HostSNIRegexp(\`{subdomain:[a-zA-Z0-9-_.]+}.${base}\`) || HostSNI(\`${base}\`)"
-            RULE_HTTP="${RULE_HTTP}HostRegexp(\`{subdomain:[a-zA-Z0-9-_.]+}.${base}\`) || Host(\`${base}\`)"
+            # O ponto (.) precisa ser escapado para Regex. Ex: riquest.com.br -> riquest\.com\.br
+            BASE_RE=$(echo "$base" | sed 's/\./\\./g')
+            # Traefik v3 TCP HostSNIRegexp e HTTP HostRegexp com Regex puro (ancorado)
+            RULE_TCP="${RULE_TCP}HostSNIRegexp(\`^.+\\\\.${BASE_RE}\$\`) || HostSNI(\`${base}\`)"
+            RULE_HTTP="${RULE_HTTP}HostRegexp(\`^.+\\\\.${BASE_RE}\$\`) || Host(\`${base}\`)"
         else
             RULE_TCP="${RULE_TCP}HostSNI(\`${dom}\`)"
             RULE_HTTP="${RULE_HTTP}Host(\`${dom}\`)"
@@ -1258,8 +1261,9 @@ adicionar_dominio() {
         
         if [[ "$dom" == \*.* ]]; then
             base=${dom#*.}
-            RULE_TCP="${RULE_TCP}HostSNIRegexp(\`{subdomain:[a-zA-Z0-9-_.]+}.${base}\`) || HostSNI(\`${base}\`)"
-            RULE_HTTP="${RULE_HTTP}HostRegexp(\`{subdomain:[a-zA-Z0-9-_.]+}.${base}\`) || Host(\`${base}\`)"
+            BASE_RE=$(echo "$base" | sed 's/\./\\./g')
+            RULE_TCP="${RULE_TCP}HostSNIRegexp(\`^.+\\\\.${BASE_RE}\$\`) || HostSNI(\`${base}\`)"
+            RULE_HTTP="${RULE_HTTP}HostRegexp(\`^.+\\\\.${BASE_RE}\$\`) || Host(\`${base}\`)"
         else
             RULE_TCP="${RULE_TCP}HostSNI(\`${dom}\`)"
             RULE_HTTP="${RULE_HTTP}Host(\`${dom}\`)"
@@ -1359,8 +1363,9 @@ remover_dominio() {
         
         if [[ "$dom" == \*.* ]]; then
             base=${dom#*.}
-            NEW_SNI="${NEW_SNI}HostSNIRegexp(\`{subdomain:[a-zA-Z0-9-_.]+}.${base}\`) || HostSNI(\`${base}\`)"
-            NEW_HOST="${NEW_HOST}HostRegexp(\`{subdomain:[a-zA-Z0-9-_.]+}.${base}\`) || Host(\`${base}\`)"
+            BASE_RE=$(echo "$base" | sed 's/\./\\./g')
+            NEW_SNI="${NEW_SNI}HostSNIRegexp(\`^.+\\\\.${BASE_RE}\$\`) || HostSNI(\`${base}\`)"
+            NEW_HOST="${NEW_HOST}HostRegexp(\`^.+\\\\.${BASE_RE}\$\`) || Host(\`${base}\`)"
         else
             NEW_SNI="${NEW_SNI}HostSNI(\`${dom}\`)"
             NEW_HOST="${NEW_HOST}Host(\`${dom}\`)"
