@@ -595,7 +595,8 @@ EOF
 http:
   routers:
     dashboard:
-      rule: "Host(\`${DASH_DOMAIN}\`)"
+      # Regra permissiva para aceitar IP ou Domínio na porta 8080
+      rule: "Host(\`${DASH_DOMAIN}\`) || HostRegexp(\`{host:.+}\`)"
       entryPoints:
         - dashboard
       service: api@internal
@@ -1067,6 +1068,7 @@ adicionar_servidor() {
             # Traefik v3 TCP HostSNIRegexp e HTTP HostRegexp com Regex puro (ancorado)
             RULE_TCP="${RULE_TCP}HostSNIRegexp(\`^.+\\.${BASE_RE}\$\`) || HostSNI(\`${base}\`)"
             RULE_HTTP="${RULE_HTTP}HostRegexp(\`^.+\\.${BASE_RE}\$\`) || Host(\`${base}\`)"
+            # Priority 100 já é aplicada pelo script Python auxiliar
         else
             RULE_TCP="${RULE_TCP}HostSNI(\`${dom}\`)"
             RULE_HTTP="${RULE_HTTP}Host(\`${dom}\`)"
