@@ -4,9 +4,16 @@ Gerenciador de instalação do Traefik Central com suporte a Wildcards e TLS Pas
 
 ## Instalação Rápida
 
-Para rodar o instalador diretamente do GitHub em qualquer servidor Linux, use o comando:
+Para rodar o instalador diretamente em qualquer servidor Linux, use o comando:
 
 ```bash
 curl -O https://raw.githubusercontent.com/alexbuzatto/instaladortraefikcentral/main/traefikcentral.sh
-sudo bash traefikcentral.sh
+chmod +x traefikcentral.sh
+sudo ./traefikcentral.sh
+```
+
+Ou execute diretamente via bash:
+
+```bash
+curl -sSL https://raw.githubusercontent.com/alexbuzatto/instaladortraefikcentral/main/traefikcentral.sh | sudo bash
 ```
