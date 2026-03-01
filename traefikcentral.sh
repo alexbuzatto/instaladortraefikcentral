@@ -738,9 +738,9 @@ if not has_structure:
     with open(filepath, "w") as f:
         f.write(new_content)
 else:
-    content = re.sub(r"(tcp:\n  routers:)(.*?)(  services:)", rf"\1\2{r_tcp}\3", content, flags=re.DOTALL)
-    content = re.sub(r"(  services:)(.*?)(# ---- PORTA 80)", rf"\1\2{s_tcp}\n\3", content, flags=re.DOTALL)
-    content = re.sub(r"(http:\n  routers:)(.*?)(  services:)", rf"\1\2{r_http}\3", content, flags=re.DOTALL)
+    content = re.sub(r"(tcp:\n  routers:)(.*?)(  services:)", lambda m: f"{m.group(1)}{m.group(2)}{r_tcp}{m.group(3)}", content, flags=re.DOTALL)
+    content = re.sub(r"(  services:)(.*?)(# ---- PORTA 80)", lambda m: f"{m.group(1)}{m.group(2)}{s_tcp}\n{m.group(3)}", content, flags=re.DOTALL)
+    content = re.sub(r"(http:\n  routers:)(.*?)(  services:)", lambda m: f"{m.group(1)}{m.group(2)}{r_http}{m.group(3)}", content, flags=re.DOTALL)
     content = content.rstrip() + "\n" + s_http
     with open(filepath, "w") as f:
         f.write(content)
@@ -1308,14 +1308,14 @@ with open(filepath, "r") as f:
 # Substituir rule TCP (linha unica com aspas duplas)
 content = re.sub(
     rf'(    {re.escape(srv_name)}-https:\n      rule: )"[^"]*"',
-    f'    {srv_name}-https:\n      rule: "{rule_tcp}"',
+    lambda m: f'{m.group(1)}"{rule_tcp}"',
     content
 )
 
 # Substituir rule HTTP
 content = re.sub(
     rf'(    {re.escape(srv_name)}-http:\n      rule: )"[^"]*"',
-    f'    {srv_name}-http:\n      rule: "{rule_http}"',
+    lambda m: f'{m.group(1)}"{rule_http}"',
     content
 )
 
@@ -1403,8 +1403,8 @@ import sys, re
 filepath, srv_name, new_sni, new_host = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
 with open(filepath, 'r') as f:
     content = f.read()
-content = re.sub(rf'(    {re.escape(srv_name)}-https:\n      rule: )"[^"]*"', f'    {srv_name}-https:\n      rule: "{new_sni}"', content)
-content = re.sub(rf'(    {re.escape(srv_name)}-http:\n      rule: )"[^"]*"', f'    {srv_name}-http:\n      rule: "{new_host}"', content)
+content = re.sub(rf'(    {re.escape(srv_name)}-https:\n      rule: )"[^"]*"', lambda m: f'{m.group(1)}"{new_sni}"', content)
+content = re.sub(rf'(    {re.escape(srv_name)}-http:\n      rule: )"[^"]*"', lambda m: f'{m.group(1)}"{new_host}"', content)
 with open(filepath, 'w') as f:
     f.write(content)
 print("  Atualizado.")
