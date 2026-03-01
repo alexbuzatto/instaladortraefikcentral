@@ -601,7 +601,7 @@ http:
         - dashboard
       service: api@internal
       middlewares:
-        - basicauth
+        - basicauth@file
 
   middlewares:
     basicauth:
