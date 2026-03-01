@@ -1042,8 +1042,9 @@ adicionar_servidor() {
             # O ponto (.) precisa ser escapado para Regex. Ex: riquest.com.br -> riquest\.com\.br
             BASE_RE=$(echo "$base" | sed 's/\./\\./g')
             # Traefik v3 TCP HostSNIRegexp e HTTP HostRegexp com Regex puro (ancorado)
-            RULE_TCP="${RULE_TCP}HostSNIRegexp(\`^.+\\.${BASE_RE}\$\`) || HostSNI(\`${base}\`)"
-            RULE_HTTP="${RULE_HTTP}HostRegexp(\`^.+\\.${BASE_RE}\$\`) || Host(\`${base}\`)"
+            # No YAML, barras invertidas dentro de aspas duplas precisam de escape duplo (\\.)
+            RULE_TCP="${RULE_TCP}HostSNIRegexp(\`^.+\\\\.${BASE_RE}\$\`) || HostSNI(\`${base}\`)"
+            RULE_HTTP="${RULE_HTTP}HostRegexp(\`^.+\\\\.${BASE_RE}\$\`) || Host(\`${base}\`)"
             # Priority 100 já é aplicada pelo script Python auxiliar
         else
             RULE_TCP="${RULE_TCP}HostSNI(\`${dom}\`)"
@@ -1257,8 +1258,8 @@ adicionar_dominio() {
         if [[ "$dom" == \*.* ]]; then
             base=${dom#*.}
             BASE_RE=$(echo "$base" | sed 's/\./\\./g')
-            RULE_TCP="${RULE_TCP}HostSNIRegexp(\`^.+\\.${BASE_RE}\$\`) || HostSNI(\`${base}\`)"
-            RULE_HTTP="${RULE_HTTP}HostRegexp(\`^.+\\.${BASE_RE}\$\`) || Host(\`${base}\`)"
+            RULE_TCP="${RULE_TCP}HostSNIRegexp(\`^.+\\\\.${BASE_RE}\$\`) || HostSNI(\`${base}\`)"
+            RULE_HTTP="${RULE_HTTP}HostRegexp(\`^.+\\\\.${BASE_RE}\$\`) || Host(\`${base}\`)"
         else
             RULE_TCP="${RULE_TCP}HostSNI(\`${dom}\`)"
             RULE_HTTP="${RULE_HTTP}Host(\`${dom}\`)"
@@ -1359,8 +1360,8 @@ remover_dominio() {
         if [[ "$dom" == \*.* ]]; then
             base=${dom#*.}
             BASE_RE=$(echo "$base" | sed 's/\./\\./g')
-            NEW_SNI="${NEW_SNI}HostSNIRegexp(\`^.+\\.${BASE_RE}\$\`) || HostSNI(\`${base}\`)"
-            NEW_HOST="${NEW_HOST}HostRegexp(\`^.+\\.${BASE_RE}\$\`) || Host(\`${base}\`)"
+            NEW_SNI="${NEW_SNI}HostSNIRegexp(\`^.+\\\\.${BASE_RE}\$\`) || HostSNI(\`${base}\`)"
+            NEW_HOST="${NEW_HOST}HostRegexp(\`^.+\\\\.${BASE_RE}\$\`) || Host(\`${base}\`)"
         else
             NEW_SNI="${NEW_SNI}HostSNI(\`${dom}\`)"
             NEW_HOST="${NEW_HOST}Host(\`${dom}\`)"
