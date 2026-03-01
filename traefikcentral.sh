@@ -517,11 +517,12 @@ services:
     command:
       # Dashboard
       - "--api.dashboard=true"
-      - "--api.insecure=true"
+      - "--api.insecure=false"
 
       # EntryPoints
       - "--entrypoints.web.address=:80"
       - "--entrypoints.websecure.address=:443"
+      - "--entrypoints.dashboard.address=:8080"
 
       # Estratégia Orion: O tráfego HTTP na porta 80 precisa chegar aos servidores destino
       # para que o Let's Encrypt deles consiga renovar os certificados (HTTP Challenge).
@@ -584,9 +585,31 @@ volumes:
 EOF
     ok "docker-compose.yml criado"
 
-    # O dashboard agora é gerenciado pelo modo insecure na porta 8080
-    rm -f "$BASE_DIR/dynamic-config/dashboard.yml"
-    ok "Modo Dashboard Insecure (porta 8080) configurado"
+    # ------------------------------------------------------------------
+    # dashboard.yml (HTTP Simples com Senha)
+    # ------------------------------------------------------------------
+    step "dynamic-config/dashboard.yml..."
+    cat > "$BASE_DIR/dynamic-config/dashboard.yml" <<EOF
+# Dashboard do Traefik Central
+# Acesso: http://${DASH_DOMAIN}:8080 OU http://[SEU-IP]:8080
+# Nota: Configurado sem SSL para evitar bloqueios de Rate Limit.
+http:
+  routers:
+    dashboard-http:
+      rule: "Host(\`${DASH_DOMAIN}\`) || HostRegexp(\`{host:.+}\`)"
+      entryPoints:
+        - dashboard
+      service: api@internal
+      middlewares:
+        - basicauth
+
+  middlewares:
+    basicauth:
+      basicAuth:
+        users:
+          - "${DASH_USER}:${HASH}"
+EOF
+    ok "dashboard.yml criado com proteção por senha"
 
     # ------------------------------------------------------------------
     # servers.yml (TCP passthrough 443 + HTTP proxy 80)
