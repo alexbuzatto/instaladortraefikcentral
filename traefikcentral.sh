@@ -618,6 +618,22 @@ EOF
     ok "dashboard.yml criado com proteção por senha"
 
     # ------------------------------------------------------------------
+    # middlewares.yml (Cabeçalhos de proxy para Let's Encrypt funcionar)
+    # ------------------------------------------------------------------
+    step "dynamic-config/middlewares.yml..."
+    cat > "$BASE_DIR/dynamic-config/middlewares.yml" <<EOF
+# Middlewares globais do Traefik Central
+http:
+  middlewares:
+    proxy-headers:
+      headers:
+        customRequestHeaders:
+          X-Forwarded-For: ""
+          X-Real-Ip: ""
+EOF
+    ok "middlewares.yml criado"
+
+    # ------------------------------------------------------------------
     # servers.yml (TCP passthrough 443 + HTTP proxy 80)
     # ------------------------------------------------------------------
     step "dynamic-config/servers.yml..."
@@ -733,16 +749,11 @@ if not has_structure:
         "# ---- PORTA 443: TCP PASSTHROUGH ----\n"
         "tcp:\n  routers:\n" + r_tcp + "\n  services:\n" + s_tcp + "\n"
         "# ---- PORTA 80: HTTP PROXY (para Lets Encrypt funcionar) ----\n"
-        "http:\n  middlewares:\n    proxy-headers:\n      headers:\n        customRequestHeaders:\n          X-Forwarded-For: \"\"\n          X-Real-Ip: \"\"\n"
-        "  routers:\n" + r_http + "\n  services:\n" + s_http + "\n"
+        "http:\n  routers:\n" + r_http + "\n  services:\n" + s_http + "\n"
     )
     with open(filepath, "w") as f:
         f.write(new_content)
 else:
-    # Garantir que o middleware proxy-headers existe na raiz do escopo HTTP
-    if "proxy-headers:" not in content:
-        content = re.sub(r"(http:\n)", r"http:\n  middlewares:\n    proxy-headers:\n      headers:\n        customRequestHeaders:\n          X-Forwarded-For: \"\"\n          X-Real-Ip: \"\"\n", content)
-        
     content = re.sub(r"(tcp:\n  routers:)(.*?)(  services:)", lambda m: f"{m.group(1)}{m.group(2)}{r_tcp}{m.group(3)}", content, flags=re.DOTALL)
     content = re.sub(r"(  services:)(.*?)(# ---- PORTA 80)", lambda m: f"{m.group(1)}{m.group(2)}{s_tcp}\n{m.group(3)}", content, flags=re.DOTALL)
     content = re.sub(r"(http:\n  routers:)(.*?)(  services:)", lambda m: f"{m.group(1)}{m.group(2)}{r_http}{m.group(3)}", content, flags=re.DOTALL)
