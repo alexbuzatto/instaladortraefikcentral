@@ -1122,8 +1122,8 @@ selecionar_servidor() {
     for srv in "${SRV_ARRAY[@]}"; do
         # Pegar domínios do servidor (suporta HostSNI e HostSNIRegexp)
         RULE_LINE=$(awk "/^    ${srv}-https:/{found=1} found && /rule:/{print; exit}" "$SERVERS_FILE" || echo "")
-        # Extrair domínios usando sed de forma robusta
-        DOMS=$(echo "$RULE_LINE" | sed -E 's/HostSNI(Regexp)?\(`//g; s/`\)//g; s/\^.+\\.//g; s/\\\$//g; s/\\//g; s/ \|\| /, /g; s/rule: "//g; s/"$//g' | xargs || echo "?")
+        # Extrair domínios usando sed de forma robusta e trocando a regex moderna por um asterisco (para legibilidade de configs passadas)
+        DOMS=$(echo "$RULE_LINE" | sed -E 's/HostSNI(Regexp)?\(`//g; s/`\)//g; s/\{subdomain:\[a-zA-Z0-9-\]\+\}\\\./*\./g; s/\^.+\\.//g; s/\\\$//g; s/\\//g; s/ \|\| /, /g; s/rule: "//g; s/"$//g' | xargs || echo "?")
         echo -e "  ${CYAN}${i})${NC} ${WHITE}${srv}${NC}"
         [ -n "$DOMS" ] && echo -e "     ${BLUE}↳ ${DOMS}${NC}"
         i=$((i+1))
@@ -1405,8 +1405,8 @@ listar_servidores() {
         while IFS= read -r router; do
             ADDR=$(awk "/^    ${router}-https-svc:/{found=1} found && /address:/{print; exit}" "$SERVERS_FILE" | grep -oP '"[^"]+"' | tr -d '"' || echo "?")
             RULE_LINE=$(awk "/^    ${router}-https:/{found=1} found && /rule:/{print; exit}" "$SERVERS_FILE" || echo "")
-            # Limpeza robusta para a listagem (remove regex e escapes)
-            DOMS=$(echo "$RULE_LINE" | sed -E 's/HostSNI(Regexp)?\(`//g; s/`\)//g; s/\^.+\\.//g; s/\\\$//g; s/\\//g; s/ \|\| /, /g; s/rule: "//g; s/"$//g' | xargs || echo "?")
+            # Limpeza robusta para a listagem (remove regex e escapes modernos/legados)
+            DOMS=$(echo "$RULE_LINE" | sed -E 's/HostSNI(Regexp)?\(`//g; s/`\)//g; s/\{subdomain:\[a-zA-Z0-9-\]\+\}\\\./*\./g; s/\^.+\\.//g; s/\\\$//g; s/\\//g; s/ \|\| /, /g; s/rule: "//g; s/"$//g' | xargs || echo "?")
             echo -e "  ${GREEN}✔ ${router}${NC}"
             info "  Endereço: $ADDR"
             info "  Domínios: $DOMS"
