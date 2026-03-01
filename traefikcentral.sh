@@ -498,9 +498,9 @@ services:
       - "--entrypoints.websecure.address=:443"
       - "--entrypoints.dashboard.address=:8080"
 
-      # NÃO há redirecionamento HTTP→HTTPS no Central
-      # O tráfego HTTP na porta 80 precisa chegar aos servidores destino
-      # para que o Let's Encrypt consiga renovar os certificados (HTTP Challenge)
+      # Estratégia Orion: O tráfego HTTP na porta 80 precisa chegar aos servidores destino
+      # para que o Let's Encrypt deles consiga renovar os certificados (HTTP Challenge).
+      # O redirecionamento para HTTPS deve ocorrer APENAS nos servidores de destino.
 
       # Provider: Swarm
       - "--providers.swarm=true"
@@ -950,6 +950,24 @@ adicionar_servidor() {
         erro "IP inválido. Formato: 192.168.25.102"
     done
 
+    # Teste de conectividade opcional
+    read -p "  Testar conectividade com $SERVER_IP? (S/n): " TEST_CONN < /dev/tty
+    if [[ ! "$TEST_CONN" =~ ^[Nn]$ ]]; then
+        step "Testando ping..."
+        if ping -c 1 -W 2 "$SERVER_IP" &>/dev/null; then
+            ok "Ping: OK"
+        else
+            warn "Ping falhou (pode ser firewall), tentando porta 80..."
+            if timeout 2 bash -c "</dev/tcp/$SERVER_IP/80" 2>/dev/null; then
+                ok "Porta 80: Aberta"
+            else
+                erro "Não foi possível alcançar $SERVER_IP nas portas comuns."
+                read -p "Deseja continuar mesmo assim? (s/N): " CONT_ERR < /dev/tty
+                [[ "$CONT_ERR" =~ ^[Ss]$ ]] || return
+            fi
+        fi
+    fi
+
     read -p "  Porta HTTPS [443]: " SERVER_PORT_HTTPS < /dev/tty
     SERVER_PORT_HTTPS="${SERVER_PORT_HTTPS:-443}"
 
@@ -959,8 +977,9 @@ adicionar_servidor() {
     # Coletar domínios por domínio base
     ALL_DOMAINS=()
     separador
-    echo -e "\n  ${YELLOW}📋 CONFIGURAÇÃO DE DOMÍNIOS${NC}"
-    echo -e "  ${CYAN}Você pode adicionar subdomínios de um ou mais domínios base.${NC}\n"
+    echo -e "\n  ${YELLOW}📋 CONFIGURAÇÃO DE DOMÍNIOS (MODELO ORION)${NC}"
+    echo -e "  ${CYAN}Você pode adicionar subdomínios de um ou mais domínios base.${NC}"
+    echo -e "  ${WHITE}Isso funcionará com seus certificados atuais sem alteração.${NC}\n"
 
     while true; do
         # Pedir domínio base
@@ -1397,8 +1416,8 @@ listar_servidores() {
 # MENU GERENCIAR SERVIDORES
 # ============================================================================
 menu_gerenciar_servidores() {
-    header "🖥️ GERENCIAR SERVIDORES"
-    echo -e "  ${CYAN}1)${NC} Adicionar novo servidor"
+    header "🖥️ GERENCIAR SERVIDORES (ORION / CLIENTES)"
+    echo -e "  ${CYAN}1)${NC} Vincular novo servidor Orion"
     echo -e "  ${CYAN}2)${NC} Adicionar domínio a servidor existente"
     echo -e "  ${CYAN}3)${NC} Remover domínio de servidor existente"
     echo -e "  ${CYAN}4)${NC} Remover servidor completo"
