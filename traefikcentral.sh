@@ -588,27 +588,35 @@ EOF
     # ------------------------------------------------------------------
     # dashboard.yml (HTTP com ACME)
     # ------------------------------------------------------------------
-    step "dynamic-config/dashboard.yml..."
-    cat > "$BASE_DIR/dynamic-config/dashboard.yml" <<EOF
-# Dashboard do Traefik Central
-# Acesso: https://${DASH_DOMAIN}:8080
+# Dashboard do Traefik Central (HTTPS 443)
 http:
   routers:
-    dashboard:
+    dashboard-https:
       rule: "Host(\`${DASH_DOMAIN}\`)"
       entryPoints:
-        - dashboard
+        - websecure
       service: api@internal
       middlewares:
         - basicauth
       tls:
         certResolver: letsencrypt
 
+    dashboard-http:
+      rule: "Host(\`${DASH_DOMAIN}\`)"
+      entryPoints:
+        - web
+      middlewares:
+        - redirect-to-https
+
   middlewares:
     basicauth:
       basicAuth:
         users:
           - "${DASH_USER}:${HASH}"
+    redirect-to-https:
+      redirectScheme:
+        scheme: https
+        permanent: true
 EOF
     ok "dashboard.yml criado"
 
