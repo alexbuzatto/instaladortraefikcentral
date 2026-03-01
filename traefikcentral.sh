@@ -717,7 +717,7 @@ rule_http  = sys.argv[7]
 
 r_tcp  = f"\n    {name}-https:\n      rule: \"{rule_tcp}\"\n      entryPoints:\n        - websecure\n      service: {name}-https-svc\n      tls:\n        passthrough: true\n"
 s_tcp  = f"\n    {name}-https-svc:\n      loadBalancer:\n        servers:\n          - address: \"{ip}:{port_https}\"\n"
-r_http = f"\n    {name}-http:\n      rule: \"{rule_http}\"\n      entryPoints:\n        - web\n      service: {name}-http-svc\n      priority: 100\n"
+r_http = f"\n    {name}-http:\n      rule: \"{rule_http}\"\n      entryPoints:\n        - web\n      service: {name}-http-svc\n      priority: 100\n      middlewares:\n        - proxy-headers@file\n"
 s_http = f"\n    {name}-http-svc:\n      loadBalancer:\n        passHostHeader: true\n        servers:\n          - url: \"http://{ip}:{port_http}\"\n"
 
 with open(filepath, "r") as f:
@@ -733,11 +733,16 @@ if not has_structure:
         "# ---- PORTA 443: TCP PASSTHROUGH ----\n"
         "tcp:\n  routers:\n" + r_tcp + "\n  services:\n" + s_tcp + "\n"
         "# ---- PORTA 80: HTTP PROXY (para Lets Encrypt funcionar) ----\n"
-        "http:\n  routers:\n" + r_http + "\n  services:\n" + s_http + "\n"
+        "http:\n  middlewares:\n    proxy-headers:\n      headers:\n        customRequestHeaders:\n          X-Forwarded-For: \"\"\n          X-Real-Ip: \"\"\n"
+        "  routers:\n" + r_http + "\n  services:\n" + s_http + "\n"
     )
     with open(filepath, "w") as f:
         f.write(new_content)
 else:
+    # Garantir que o middleware proxy-headers existe na raiz do escopo HTTP
+    if "proxy-headers:" not in content:
+        content = re.sub(r"(http:\n)", r"http:\n  middlewares:\n    proxy-headers:\n      headers:\n        customRequestHeaders:\n          X-Forwarded-For: \"\"\n          X-Real-Ip: \"\"\n", content)
+        
     content = re.sub(r"(tcp:\n  routers:)(.*?)(  services:)", lambda m: f"{m.group(1)}{m.group(2)}{r_tcp}{m.group(3)}", content, flags=re.DOTALL)
     content = re.sub(r"(  services:)(.*?)(# ---- PORTA 80)", lambda m: f"{m.group(1)}{m.group(2)}{s_tcp}\n{m.group(3)}", content, flags=re.DOTALL)
     content = re.sub(r"(http:\n  routers:)(.*?)(  services:)", lambda m: f"{m.group(1)}{m.group(2)}{r_http}{m.group(3)}", content, flags=re.DOTALL)
