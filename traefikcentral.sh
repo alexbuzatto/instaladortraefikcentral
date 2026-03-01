@@ -1003,6 +1003,7 @@ adicionar_servidor() {
 
         # Montar e mostrar domínios gerados
         echo -e "\n  ${GREEN}Domínios gerados:${NC}"
+        set -f
         for sub in $SUBS_INPUT; do
             if [ "$sub" == "*" ]; then
                 FULL="*.${BASE_DOMAIN}"
@@ -1013,6 +1014,7 @@ adicionar_servidor() {
             ALL_DOMAINS+=("$FULL")
             ok "  $FULL"
         done
+        set +f
         echo
 
         read -p "  Adicionar subdomínios de outro domínio base? (s/N): " MORE_BASE < /dev/tty
@@ -1101,8 +1103,9 @@ selecionar_servidor() {
     echo -e "\n  ${YELLOW}${MSG}${NC}\n"
     local i=1
     for srv in "${SRV_ARRAY[@]}"; do
-        # Pegar domínios do servidor
-        DOMS=$(awk "/^    ${srv}-https:/{found=1} found && /rule:/{print; exit}" "$SERVERS_FILE" | grep -oP "(?<=HostSNI\().*(?=\))" | tr -d '\`' | sed 's/ || HostSNI(/ /g' || echo "")
+        # Pegar domínios do servidor (suporta HostSNI e HostSNIRegexp)
+        RULE_LINE=$(awk "/^    ${srv}-https:/{found=1} found && /rule:/{print; exit}" "$SERVERS_FILE" || echo "")
+        DOMS=$(echo "$RULE_LINE" | grep -oP "(?<=HostSNI(Regexp)?\().*?(?=\))" | tr -d '\`' | sed 's/{subdomain:\[a-zA-Z0-9-_.\]+}\./*./g' | paste -sd ", " - || echo "")
         echo -e "  ${CYAN}${i})${NC} ${WHITE}${srv}${NC}"
         [ -n "$DOMS" ] && echo -e "     ${BLUE}↳ ${DOMS}${NC}"
         i=$((i+1))
@@ -1180,6 +1183,7 @@ adicionar_dominio() {
             [ -n "$SUBDOMAIN_INPUT" ] && break
             erro "Informe pelo menos um subdomínio ou *."
         done
+        set -f
         for sub in $SUBDOMAIN_INPUT; do
             if [ "$sub" == "*" ]; then
                 NEW_DOMAINS_LIST+=("*.${CHOSEN_BASE}")
@@ -1188,6 +1192,7 @@ adicionar_dominio() {
                 NEW_DOMAINS_LIST+=("${sub}.${CHOSEN_BASE}")
             fi
         done
+        set +f
     fi
 
     # 5. Verificar duplicatas
@@ -1401,7 +1406,8 @@ listar_servidores() {
     if [ -n "$ROUTERS" ]; then
         while IFS= read -r router; do
             ADDR=$(awk "/^    ${router}-https-svc:/{found=1} found && /address:/{print; exit}" "$SERVERS_FILE" | grep -oP '"[^"]+"' | tr -d '"' || echo "?")
-            DOMS=$(awk "/^    ${router}-https:/{found=1} found && /rule:/{print; exit}" "$SERVERS_FILE" | grep -oP "(?<=HostSNI\().*(?=\))" | tr -d '\`' | sed 's/ || HostSNI(/, /g' || echo "?")
+            RULE_LINE=$(awk "/^    ${router}-https:/{found=1} found && /rule:/{print; exit}" "$SERVERS_FILE" || echo "")
+            DOMS=$(echo "$RULE_LINE" | grep -oP "(?<=HostSNI(Regexp)?\().*?(?=\))" | tr -d '\`' | sed 's/{subdomain:\[a-zA-Z0-9-_.\]+}\./*./g' | paste -sd ", " - || echo "?")
             echo -e "  ${GREEN}✔ ${router}${NC}"
             info "  Endereço: $ADDR"
             info "  Domínios: $DOMS"
