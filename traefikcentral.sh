@@ -591,11 +591,11 @@ EOF
     step "dynamic-config/dashboard.yml..."
     cat > "$BASE_DIR/dynamic-config/dashboard.yml" <<EOF
 # Dashboard do Traefik Central
-# Acesso: https://${DASH_DOMAIN}:8080 (Bypass certificado se Rate Limit)
+# Acesso: https://${DASH_DOMAIN}:8080 OU http://${DASH_DOMAIN}:8080
+# Nota: Use HTTP (sem S) se o certificado falhar devido ao Rate Limit.
 http:
   routers:
-    dashboard:
-      # Regra permissiva para aceitar IP ou Domínio na porta 8080
+    dashboard-https:
       rule: "Host(\`${DASH_DOMAIN}\`) || HostRegexp(\`{host:.+}\`)"
       entryPoints:
         - dashboard
@@ -604,6 +604,14 @@ http:
         - basicauth
       tls:
         certResolver: letsencrypt
+
+    dashboard-http:
+      rule: "Host(\`${DASH_DOMAIN}\`) || HostRegexp(\`{host:.+}\`)"
+      entryPoints:
+        - dashboard
+      service: api@internal
+      middlewares:
+        - basicauth
 
   middlewares:
     basicauth:
