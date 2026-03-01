@@ -1023,34 +1023,21 @@ adicionar_servidor() {
 
         # Pedir subdomínios
         echo -e "  ${CYAN}Subdomínios para ${WHITE}.${BASE_DOMAIN}${NC}"
-        echo -e "  ${WHITE}Ex: n8n unichat painel evolution${NC} ${BLUE}(separados por espaço)${NC}"
-        echo -e "  ${YELLOW}DICA: Digite '*' para habilitar CURINGA (Catcher/Wildcard).${NC}"
-        echo -e "  ${WHITE}Isso repassará QUALQUER subdomínio novo automaticamente para este servidor!${NC}"
+        echo -e "  ${WHITE}Ex: painel api n8n typebot${NC} ${BLUE}(separados por espaço)${NC}"
         while true; do
-            read -p "  Subdomínios (ou *): " SUBS_INPUT < /dev/tty
+            read -p "  Subdomínios: " SUBS_INPUT < /dev/tty
             [ -n "$SUBS_INPUT" ] && break
-            erro "Informe pelo menos um subdomínio ou *."
+            erro "Informe pelo menos um subdomínio."
         done
-
-        if [ "$SUBS_INPUT" != "*" ] && [[ "$SUBS_INPUT" != *" "* ]]; then
-            warn "Atenção: Algumas aplicações usam vários subdomínios (ex: webhookn8n + en8n)."
-            info "Certifique-se de listar TODOS separadamente ou use '*'."
-        fi
 
         # Montar e mostrar domínios gerados
         echo -e "\n  ${GREEN}Domínios gerados:${NC}"
-        set -f
         for sub in $SUBS_INPUT; do
-            if [ "$sub" == "*" ]; then
-                FULL="*.${BASE_DOMAIN}"
-            else
-                sub=$(echo "$sub" | tr -d ' ' | tr -d '.' | tr '[:upper:]' '[:lower:]')
-                FULL="${sub}.${BASE_DOMAIN}"
-            fi
+            sub=$(echo "$sub" | tr -d ' ' | tr -d '.' | tr '[:upper:]' '[:lower:]')
+            FULL="${sub}.${BASE_DOMAIN}"
             ALL_DOMAINS+=("$FULL")
             ok "  $FULL"
         done
-        set +f
         echo
 
         read -p "  Adicionar subdomínios de outro domínio base? (s/N): " MORE_BASE < /dev/tty
@@ -1065,19 +1052,8 @@ adicionar_servidor() {
         [ -n "$RULE_TCP" ] && RULE_TCP="${RULE_TCP} || "
         [ -n "$RULE_HTTP" ] && RULE_HTTP="${RULE_HTTP} || "
         
-        if [[ "$dom" == \*.* ]]; then
-            base=${dom#*.}
-            # O ponto (.) precisa ser escapado para Regex. Ex: riquest.com.br -> riquest\.com\.br
-            BASE_RE=$(echo "$base" | sed 's/\./\\./g')
-            # Traefik v3 TCP HostSNIRegexp e HTTP HostRegexp usando o padrão Go em vez de regex posicional complexo
-            # No YAML, barras invertidas precisam de escape duplo
-            RULE_TCP="${RULE_TCP}HostSNIRegexp(\`{subdomain:[a-zA-Z0-9-]+}\\\\.${BASE_RE}\`) || HostSNI(\`${base}\`)"
-            RULE_HTTP="${RULE_HTTP}HostRegexp(\`{subdomain:[a-zA-Z0-9-]+}\\\\.${BASE_RE}\`) || Host(\`${base}\`)"
-            # Priority 100 já é aplicada pelo script Python auxiliar
-        else
-            RULE_TCP="${RULE_TCP}HostSNI(\`${dom}\`)"
-            RULE_HTTP="${RULE_HTTP}Host(\`${dom}\`)"
-        fi
+        RULE_TCP="${RULE_TCP}HostSNI(\`${dom}\`)"
+        RULE_HTTP="${RULE_HTTP}Host(\`${dom}\`)"
     done
 
     # Resumo final
@@ -1219,22 +1195,15 @@ adicionar_dominio() {
         CHOSEN_BASE="${BASE_ARRAY[$((SEL_BASE-1))]}"
         echo -e "\n  ${CYAN}Subdomínios para ${WHITE}.${CHOSEN_BASE}${NC}"
         echo -e "  ${WHITE}Ex: n8n unichat evolution${NC} ${BLUE}(separados por espaço)${NC}"
-        echo -e "  ${YELLOW}DICA: Digite '*' para Curinga (Catcher de todos subdomínios).${NC}\n"
         while true; do
-            read -p "  Subdomínios (ou *): " SUBDOMAIN_INPUT < /dev/tty
+            read -p "  Subdomínios: " SUBDOMAIN_INPUT < /dev/tty
             [ -n "$SUBDOMAIN_INPUT" ] && break
-            erro "Informe pelo menos um subdomínio ou *."
+            erro "Informe pelo menos um subdomínio."
         done
-        set -f
         for sub in $SUBDOMAIN_INPUT; do
-            if [ "$sub" == "*" ]; then
-                NEW_DOMAINS_LIST+=("*.${CHOSEN_BASE}")
-            else
-                sub=$(echo "$sub" | tr -d " .")
-                NEW_DOMAINS_LIST+=("${sub}.${CHOSEN_BASE}")
-            fi
+            sub=$(echo "$sub" | tr -d " .")
+            NEW_DOMAINS_LIST+=("${sub}.${CHOSEN_BASE}")
         done
-        set +f
     fi
 
     # 5. Verificar duplicatas
@@ -1279,19 +1248,11 @@ adicionar_dominio() {
     RULE_TCP=""
     RULE_HTTP=""
     for dom in "${ALL_FINAL[@]}"; do
-        # Trata dominio normal vs wildcard
         [ -n "$RULE_TCP" ] && RULE_TCP="${RULE_TCP} || "
         [ -n "$RULE_HTTP" ] && RULE_HTTP="${RULE_HTTP} || "
         
-        if [[ "$dom" == \*.* ]]; then
-            base=${dom#*.}
-            BASE_RE=$(echo "$base" | sed 's/\./\\./g')
-            RULE_TCP="${RULE_TCP}HostSNIRegexp(\`{subdomain:[a-zA-Z0-9-]+}\\\\.${BASE_RE}\`) || HostSNI(\`${base}\`)"
-            RULE_HTTP="${RULE_HTTP}HostRegexp(\`{subdomain:[a-zA-Z0-9-]+}\\\\.${BASE_RE}\`) || Host(\`${base}\`)"
-        else
-            RULE_TCP="${RULE_TCP}HostSNI(\`${dom}\`)"
-            RULE_HTTP="${RULE_HTTP}Host(\`${dom}\`)"
-        fi
+        RULE_TCP="${RULE_TCP}HostSNI(\`${dom}\`)"
+        RULE_HTTP="${RULE_HTTP}Host(\`${dom}\`)"
     done
 
     python3 - "$SERVERS_FILE" "$SERVER_NAME" "$RULE_TCP" "$RULE_HTTP" << 'PYUPDATE'
@@ -1385,15 +1346,8 @@ remover_dominio() {
         [ -n "$NEW_SNI" ] && NEW_SNI="${NEW_SNI} || "
         [ -n "$NEW_HOST" ] && NEW_HOST="${NEW_HOST} || "
         
-        if [[ "$dom" == \*.* ]]; then
-            base=${dom#*.}
-            BASE_RE=$(echo "$base" | sed 's/\./\\./g')
-            NEW_SNI="${NEW_SNI}HostSNIRegexp(\`{subdomain:[a-zA-Z0-9-]+}\\\\.${BASE_RE}\`) || HostSNI(\`${base}\`)"
-            NEW_HOST="${NEW_HOST}HostRegexp(\`{subdomain:[a-zA-Z0-9-]+}\\\\.${BASE_RE}\`) || Host(\`${base}\`)"
-        else
-            NEW_SNI="${NEW_SNI}HostSNI(\`${dom}\`)"
-            NEW_HOST="${NEW_HOST}Host(\`${dom}\`)"
-        fi
+        NEW_SNI="${NEW_SNI}HostSNI(\`${dom}\`)"
+        NEW_HOST="${NEW_HOST}Host(\`${dom}\`)"
     done
 
     cp "$SERVERS_FILE" "${SERVERS_FILE}.bak"
