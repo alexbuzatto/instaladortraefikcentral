@@ -1010,6 +1010,11 @@ adicionar_servidor() {
             erro "Informe pelo menos um subdomínio ou *."
         done
 
+        if [ "$SUBS_INPUT" != "*" ] && [[ "$SUBS_INPUT" != *" "* ]]; then
+            warn "Atenção: Algumas aplicações usam vários subdomínios (ex: webhookn8n + en8n)."
+            info "Certifique-se de listar TODOS separadamente ou use '*'."
+        fi
+
         # Montar e mostrar domínios gerados
         echo -e "\n  ${GREEN}Domínios gerados:${NC}"
         set -f
@@ -1114,7 +1119,8 @@ selecionar_servidor() {
     for srv in "${SRV_ARRAY[@]}"; do
         # Pegar domínios do servidor (suporta HostSNI e HostSNIRegexp)
         RULE_LINE=$(awk "/^    ${srv}-https:/{found=1} found && /rule:/{print; exit}" "$SERVERS_FILE" || echo "")
-        DOMS=$(echo "$RULE_LINE" | grep -oP "(?<=HostSNI(Regexp)?\().*?(?=\))" | tr -d '\`' | sed 's/{subdomain:\[a-zA-Z0-9-_.\]+}\./*./g' | paste -sd ", " - || echo "")
+        # Extrair domínios usando sed para maior controle (remove backticks, regex e parênteses)
+        DOMS=$(echo "$RULE_LINE" | sed -E 's/HostSNI(Regexp)?\(`//g; s/`\)//g; s/\{subdomain:\[a-zA-Z0-9-_.\]+\}\./*/g; s/ \|\| /, /g; s/rule: "//g; s/"$//g' | xargs || echo "?")
         echo -e "  ${CYAN}${i})${NC} ${WHITE}${srv}${NC}"
         [ -n "$DOMS" ] && echo -e "     ${BLUE}↳ ${DOMS}${NC}"
         i=$((i+1))
@@ -1416,7 +1422,8 @@ listar_servidores() {
         while IFS= read -r router; do
             ADDR=$(awk "/^    ${router}-https-svc:/{found=1} found && /address:/{print; exit}" "$SERVERS_FILE" | grep -oP '"[^"]+"' | tr -d '"' || echo "?")
             RULE_LINE=$(awk "/^    ${router}-https:/{found=1} found && /rule:/{print; exit}" "$SERVERS_FILE" || echo "")
-            DOMS=$(echo "$RULE_LINE" | grep -oP "(?<=HostSNI(Regexp)?\().*?(?=\))" | tr -d '\`' | sed 's/{subdomain:\[a-zA-Z0-9-_.\]+}\./*./g' | paste -sd ", " - || echo "?")
+            # Limpeza robusta para a listagem
+            DOMS=$(echo "$RULE_LINE" | sed -E 's/HostSNI(Regexp)?\(`//g; s/`\)//g; s/\{subdomain:\[a-zA-Z0-9-_.\]+\}\./*/g; s/ \|\| /, /g; s/rule: "//g; s/"$//g' | xargs || echo "?")
             echo -e "  ${GREEN}✔ ${router}${NC}"
             info "  Endereço: $ADDR"
             info "  Domínios: $DOMS"
