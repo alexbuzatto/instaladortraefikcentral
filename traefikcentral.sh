@@ -70,15 +70,24 @@ diagnostico_sistema() {
     ok "Arquitetura: $(uname -m)"
 
     step "Memória RAM"
-    MEM_TOTAL=$(free -m | awk '/^Mem:/{print $2}')
-    MEM_LIVRE=$(free -m | awk '/^Mem:/{print $4}')
-    MEM_TOTAL=${MEM_TOTAL:-0}
-    MEM_LIVRE=${MEM_LIVRE:-0}
-    [ "$MEM_LIVRE" -lt 256 ] && warn "RAM: ${MEM_LIVRE}MB livre / ${MEM_TOTAL}MB total (recomendado mínimo 256MB)" || ok "RAM: ${MEM_LIVRE}MB livre / ${MEM_TOTAL}MB total"
+    # Tenta usar /proc/meminfo que é mais universal que o comando 'free'
+    MEM_TOTAL=$(grep MemTotal /proc/meminfo | awk '{print int($2/1024)}' || echo 0)
+    MEM_AVAIL=$(grep MemAvailable /proc/meminfo | awk '{print int($2/1024)}' || grep MemFree /proc/meminfo | awk '{print int($2/1024)}' || echo 0)
+    
+    if [ "$MEM_AVAIL" -lt 256 ]; then
+        warn "RAM: ${MEM_AVAIL}MB disponível / ${MEM_TOTAL}MB total (recomendado mínimo 256MB)"
+    else
+        ok "RAM: ${MEM_AVAIL}MB disponível / ${MEM_TOTAL}MB total"
+    fi
 
     step "Espaço em Disco"
-    DISCO_LIVRE=$(df -BM / | awk 'NR==2{print $4}' | sed 's/M//')
-    [ "$DISCO_LIVRE" -lt 1024 ] && warn "Disco livre: ${DISCO_LIVRE}MB" || ok "Disco livre: ${DISCO_LIVRE}MB"
+    # df -Pk garante que a saída seja em uma única linha e em KB
+    DISCO_LIVRE=$(df -Pk / | awk 'NR==2 {print int($4/1024)}')
+    if [ "$DISCO_LIVRE" -lt 1024 ]; then
+        warn "Disco livre: ${DISCO_LIVRE}MB (muito baixo!)"
+    else
+        ok "Disco livre: ${DISCO_LIVRE}MB"
+    fi
 
     step "IP do servidor"
     IP_LOCAL=$(hostname -I | awk '{print $1}')
