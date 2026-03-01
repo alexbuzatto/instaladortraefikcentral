@@ -125,6 +125,14 @@ diagnostico_sistema() {
         command -v $DEP &>/dev/null && ok "$DEP: disponível" || warn "$DEP: ausente (será instalado)"
     done
 
+    local SERVERS_FILE="/root/traefik-central/dynamic-config/servers.yml"
+    if [ -f "$SERVERS_FILE" ]; then
+        step "Configuração de Servidores (servers.yml)"
+        echo -e "${WHITE}"
+        cat "$SERVERS_FILE" | sed 's/^/  /'
+        echo -e "${NC}"
+    fi
+
     # Oferecer ver logs se quiser
     echo -e "\n  ${CYAN}1)${NC} Ver logs em tempo real (Ctrl+C para sair)"
     echo -e "  ${CYAN}0)${NC} Voltar"
