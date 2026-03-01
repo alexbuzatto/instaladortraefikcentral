@@ -124,6 +124,15 @@ diagnostico_sistema() {
     for DEP in curl openssl; do
         command -v $DEP &>/dev/null && ok "$DEP: disponível" || warn "$DEP: ausente (será instalado)"
     done
+
+    # Oferecer ver logs se quiser
+    echo -e "\n  ${CYAN}1)${NC} Ver logs em tempo real (Ctrl+C para sair)"
+    echo -e "  ${CYAN}0)${NC} Voltar"
+    read -p "Escolha: " OPT_LOG < /dev/tty
+    if [ "$OPT_LOG" = "1" ]; then
+        verificar_logs_recentes 50
+        docker service logs -f traefik-central_traefik-central 2>/dev/null || docker logs -f traefik-central 2>/dev/null
+    fi
 }
 
 # ============================================================================
@@ -1048,8 +1057,8 @@ adicionar_servidor() {
             # O ponto (.) precisa ser escapado para Regex. Ex: riquest.com.br -> riquest\.com\.br
             BASE_RE=$(echo "$base" | sed 's/\./\\./g')
             # Traefik v3 TCP HostSNIRegexp e HTTP HostRegexp com Regex puro (ancorado)
-            RULE_TCP="${RULE_TCP}HostSNIRegexp(\`^.+\\\\.${BASE_RE}\$\`) || HostSNI(\`${base}\`)"
-            RULE_HTTP="${RULE_HTTP}HostRegexp(\`^.+\\\\.${BASE_RE}\$\`) || Host(\`${base}\`)"
+            RULE_TCP="${RULE_TCP}HostSNIRegexp(\`^.+\\.${BASE_RE}\$\`) || HostSNI(\`${base}\`)"
+            RULE_HTTP="${RULE_HTTP}HostRegexp(\`^.+\\.${BASE_RE}\$\`) || Host(\`${base}\`)"
         else
             RULE_TCP="${RULE_TCP}HostSNI(\`${dom}\`)"
             RULE_HTTP="${RULE_HTTP}Host(\`${dom}\`)"
@@ -1122,8 +1131,8 @@ selecionar_servidor() {
     for srv in "${SRV_ARRAY[@]}"; do
         # Pegar domínios do servidor (suporta HostSNI e HostSNIRegexp)
         RULE_LINE=$(awk "/^    ${srv}-https:/{found=1} found && /rule:/{print; exit}" "$SERVERS_FILE" || echo "")
-        # Extrair domínios usando sed para maior controle (remove backticks, regex e parênteses)
-        DOMS=$(echo "$RULE_LINE" | sed -E 's/HostSNI(Regexp)?\(`//g; s/`\)//g; s/\{subdomain:\[a-zA-Z0-9-_.\]+\}\./*/g; s/ \|\| /, /g; s/rule: "//g; s/"$//g' | xargs || echo "?")
+        # Extrair domínios usando sed de forma robusta
+        DOMS=$(echo "$RULE_LINE" | sed -E 's/HostSNI(Regexp)?\(`//g; s/`\)//g; s/\^.+\\.//g; s/\\\$//g; s/\\//g; s/ \|\| /, /g; s/rule: "//g; s/"$//g' | xargs || echo "?")
         echo -e "  ${CYAN}${i})${NC} ${WHITE}${srv}${NC}"
         [ -n "$DOMS" ] && echo -e "     ${BLUE}↳ ${DOMS}${NC}"
         i=$((i+1))
@@ -1262,8 +1271,8 @@ adicionar_dominio() {
         if [[ "$dom" == \*.* ]]; then
             base=${dom#*.}
             BASE_RE=$(echo "$base" | sed 's/\./\\./g')
-            RULE_TCP="${RULE_TCP}HostSNIRegexp(\`^.+\\\\.${BASE_RE}\$\`) || HostSNI(\`${base}\`)"
-            RULE_HTTP="${RULE_HTTP}HostRegexp(\`^.+\\\\.${BASE_RE}\$\`) || Host(\`${base}\`)"
+            RULE_TCP="${RULE_TCP}HostSNIRegexp(\`^.+\\.${BASE_RE}\$\`) || HostSNI(\`${base}\`)"
+            RULE_HTTP="${RULE_HTTP}HostRegexp(\`^.+\\.${BASE_RE}\$\`) || Host(\`${base}\`)"
         else
             RULE_TCP="${RULE_TCP}HostSNI(\`${dom}\`)"
             RULE_HTTP="${RULE_HTTP}Host(\`${dom}\`)"
@@ -1364,8 +1373,8 @@ remover_dominio() {
         if [[ "$dom" == \*.* ]]; then
             base=${dom#*.}
             BASE_RE=$(echo "$base" | sed 's/\./\\./g')
-            NEW_SNI="${NEW_SNI}HostSNIRegexp(\`^.+\\\\.${BASE_RE}\$\`) || HostSNI(\`${base}\`)"
-            NEW_HOST="${NEW_HOST}HostRegexp(\`^.+\\\\.${BASE_RE}\$\`) || Host(\`${base}\`)"
+            NEW_SNI="${NEW_SNI}HostSNIRegexp(\`^.+\\.${BASE_RE}\$\`) || HostSNI(\`${base}\`)"
+            NEW_HOST="${NEW_HOST}HostRegexp(\`^.+\\.${BASE_RE}\$\`) || Host(\`${base}\`)"
         else
             NEW_SNI="${NEW_SNI}HostSNI(\`${dom}\`)"
             NEW_HOST="${NEW_HOST}Host(\`${dom}\`)"
@@ -1427,8 +1436,8 @@ listar_servidores() {
         while IFS= read -r router; do
             ADDR=$(awk "/^    ${router}-https-svc:/{found=1} found && /address:/{print; exit}" "$SERVERS_FILE" | grep -oP '"[^"]+"' | tr -d '"' || echo "?")
             RULE_LINE=$(awk "/^    ${router}-https:/{found=1} found && /rule:/{print; exit}" "$SERVERS_FILE" || echo "")
-            # Limpeza robusta para a listagem
-            DOMS=$(echo "$RULE_LINE" | sed -E 's/HostSNI(Regexp)?\(`//g; s/`\)//g; s/\{subdomain:\[a-zA-Z0-9-_.\]+\}\./*/g; s/ \|\| /, /g; s/rule: "//g; s/"$//g' | xargs || echo "?")
+            # Limpeza robusta para a listagem (remove regex e escapes)
+            DOMS=$(echo "$RULE_LINE" | sed -E 's/HostSNI(Regexp)?\(`//g; s/`\)//g; s/\^.+\\.//g; s/\\\$//g; s/\\//g; s/ \|\| /, /g; s/rule: "//g; s/"$//g' | xargs || echo "?")
             echo -e "  ${GREEN}✔ ${router}${NC}"
             info "  Endereço: $ADDR"
             info "  Domínios: $DOMS"
