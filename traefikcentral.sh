@@ -717,7 +717,7 @@ s_http = f"\n    {name}-http-svc:\n      loadBalancer:\n        passHostHeader: 
 with open(filepath, "r") as f:
     content = f.read()
 
-has_structure = "tcp:" in content and "http:" in content
+has_structure = bool(re.search(r"^tcp:", content, re.MULTILINE)) and bool(re.search(r"^http:", content, re.MULTILINE))
 
 if not has_structure:
     new_content = (
