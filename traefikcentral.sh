@@ -522,7 +522,6 @@ services:
       # EntryPoints
       - "--entrypoints.web.address=:80"
       - "--entrypoints.websecure.address=:443"
-      - "--entrypoints.dashboard.address=:8080"
 
       # Estratégia Orion: O tráfego HTTP na porta 80 precisa chegar aos servidores destino
       # para que o Let's Encrypt deles consiga renovar os certificados (HTTP Challenge).
