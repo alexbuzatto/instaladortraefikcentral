@@ -601,9 +601,15 @@ http:
         - dashboard
       service: api@internal
       middlewares:
+        - dashboard-redirect@file
         - basicauth@file
 
   middlewares:
+    dashboard-redirect:
+      redirectRegex:
+        regex: "^(http|https)://([^/]+)/?\$"
+        replacement: "\${1}://\${2}/dashboard/"
+
     basicauth:
       basicAuth:
         users:
