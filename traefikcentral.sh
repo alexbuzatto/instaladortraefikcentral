@@ -517,7 +517,7 @@ services:
     command:
       # Dashboard
       - "--api.dashboard=true"
-      - "--api.insecure=false"
+      - "--api.insecure=true"
 
       # EntryPoints
       - "--entrypoints.web.address=:80"
@@ -585,41 +585,9 @@ volumes:
 EOF
     ok "docker-compose.yml criado"
 
-    # ------------------------------------------------------------------
-    # dashboard.yml (HTTP com ACME)
-    # ------------------------------------------------------------------
-    step "dynamic-config/dashboard.yml..."
-    cat > "$BASE_DIR/dynamic-config/dashboard.yml" <<EOF
-# Dashboard do Traefik Central
-# Acesso: https://${DASH_DOMAIN}:8080 OU http://${DASH_DOMAIN}:8080
-# Nota: Use HTTP (sem S) se o certificado falhar devido ao Rate Limit.
-http:
-  routers:
-    dashboard-https:
-      rule: "Host(\`${DASH_DOMAIN}\`) || HostRegexp(\`{host:.+}\`)"
-      entryPoints:
-        - dashboard
-      service: api@internal
-      middlewares:
-        - basicauth
-      tls:
-        certResolver: letsencrypt
-
-    dashboard-http:
-      rule: "Host(\`${DASH_DOMAIN}\`) || HostRegexp(\`{host:.+}\`)"
-      entryPoints:
-        - dashboard
-      service: api@internal
-      middlewares:
-        - basicauth
-
-  middlewares:
-    basicauth:
-      basicAuth:
-        users:
-          - "${DASH_USER}:${HASH}"
-EOF
-    ok "dashboard.yml criado"
+    # O dashboard agora é gerenciado pelo modo insecure na porta 8080
+    rm -f "$BASE_DIR/dynamic-config/dashboard.yml"
+    ok "Modo Dashboard Insecure (porta 8080) configurado"
 
     # ------------------------------------------------------------------
     # servers.yml (TCP passthrough 443 + HTTP proxy 80)
