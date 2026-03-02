@@ -1043,7 +1043,6 @@ adicionar_dominio() {
     else
         CHOSEN_BASE="${BASE_ARRAY[$((SEL_BASE-1))]}"
         echo -e "\n  ${CYAN}Subdomínios para ${WHITE}.${CHOSEN_BASE}${NC}"
-        echo -e "  ${WHITE}Ex: n8n unichat painel evolution${NC} ${BLUE}(separados por espaço)${NC}"
         while true; do
             read -p "  Subdomínios: " SUBDOMAIN_INPUT < /dev/tty
             [ -n "$SUBDOMAIN_INPUT" ] && break
@@ -1220,8 +1219,8 @@ listar_servidores() {
 # MENU GERENCIAR SERVIDORES
 # ============================================================================
 menu_gerenciar_servidores() {
-    header "🖥️ GERENCIAR SERVIDORES ( / CLIENTES)"
-    echo -e "  ${CYAN}1)${NC} Vincular novo servidor "
+    header "🖥️ GERENCIAR SERVIDORES (ORION / CLIENTES)"
+    echo -e "  ${CYAN}1)${NC} Vincular novo servidor Orion"
     echo -e "  ${CYAN}2)${NC} Adicionar domínio a servidor existente"
     echo -e "  ${CYAN}3)${NC} Remover domínio de servidor existente"
     echo -e "  ${CYAN}4)${NC} Remover servidor completo"
@@ -1492,6 +1491,7 @@ menu_principal() {
     echo -e "  ${CYAN}4)${NC} ${RED}Remover Traefik instalado${NC}"
     echo -e "  ${CYAN}5)${NC} ${GREEN}Gerenciar servidores/domínios${NC}"
     echo -e "  ${CYAN}6)${NC} ${WHITE}Listar servidores configurados${NC}"
+    echo -e "  ${CYAN}7)${NC} ${YELLOW}🔧 Corrigir Traefik deste servidor (para servidores destino)${NC}"
     echo -e "  ${CYAN}0)${NC} ${WHITE}Sair${NC}\n"
     separador
     read -p "Escolha: " OPCAO_MENU < /dev/tty
@@ -1528,6 +1528,7 @@ while true; do
         4) verificar_traefik_existente; menu_remocao; pausar ;;
         5) menu_gerenciar_servidores; pausar ;;
         6) listar_servidores; pausar ;;
+        7) corrigir_traefik_local; pausar ;;
         0) echo -e "\n${GREEN}Saindo. Até mais!${NC}\n"; exit 0 ;;
         *) erro "Opção inválida."; sleep 2 ;;
     esac
