@@ -380,12 +380,12 @@ coletar_configuracoes() {
         SERVER_COUNT=$((SERVER_COUNT + 1))
         echo -e "${BLUE}  --- Servidor $SERVER_COUNT ---${NC}"
 
-        read -p "  Nome [vazio para parar]: " SERVER_NAME < /dev/tty
+        read -p "  Nome (ex: srv-riquest) [vazio para parar]: " SERVER_NAME < /dev/tty
         if [ -z "$SERVER_NAME" ]; then SERVER_COUNT=$((SERVER_COUNT - 1)); break; fi
         [[ ! "$SERVER_NAME" =~ ^[a-zA-Z0-9_-]+$ ]] && { erro "Nome inválido."; SERVER_COUNT=$((SERVER_COUNT - 1)); continue; }
 
         while true; do
-            read -p "  IP: " SERVER_IP < /dev/tty
+            read -p "  IP (ex: 192.168.25.100): " SERVER_IP < /dev/tty
             [[ "$SERVER_IP" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] && break
             erro "IP inválido."
         done
@@ -396,14 +396,14 @@ coletar_configuracoes() {
         ALL_DOMAINS=()
         while true; do
             while true; do
-                read -p "  Domínio base: " BASE_DOMAIN < /dev/tty
+                read -p "  Domínio base (ex: empresa.com.br): " BASE_DOMAIN < /dev/tty
                 BASE_DOMAIN=$(echo "$BASE_DOMAIN" | tr -d ' ' | tr '[:upper:]' '[:lower:]')
                 [[ "$BASE_DOMAIN" =~ \. ]] && break
                 erro "Inválido."
             done
-            echo -e "  ${CYAN}Subdomínios para .${BASE_DOMAIN} (espaço):${NC}"
+            echo -e "  ${CYAN}Subdomínios para .${BASE_DOMAIN} (ex: painel n8n api):${NC}"
             while true; do
-                read -p "  Subdomínios: " SUBS_INPUT < /dev/tty
+                read -p "  Subdomínios (separados por espaço): " SUBS_INPUT < /dev/tty
                 [ -n "$SUBS_INPUT" ] && break
                 erro "Obrigatório."
             done
@@ -699,7 +699,7 @@ adicionar_servidor() {
     garantir_servers_yml
 
     while true; do
-        read -p "  Nome: " SERVER_NAME < /dev/tty
+        read -p "  Nome (ex: srv-riquest): " SERVER_NAME < /dev/tty
         [ -z "$SERVER_NAME" ] && { erro "Obrigatório."; continue; }
         [[ ! "$SERVER_NAME" =~ ^[a-zA-Z0-9_-]+$ ]] && { erro "Inválido."; continue; }
         grep -q "^    ${SERVER_NAME}:" "$SERVERS_FILE" 2>/dev/null && { erro "Já existe!"; continue; }
@@ -707,7 +707,7 @@ adicionar_servidor() {
     done
 
     while true; do
-        read -p "  IP: " SERVER_IP < /dev/tty
+        read -p "  IP (ex: 192.168.25.100): " SERVER_IP < /dev/tty
         [[ "$SERVER_IP" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] && break
         erro "IP inválido."
     done
@@ -731,14 +731,14 @@ adicionar_servidor() {
 
     while true; do
         while true; do
-            read -p "  Domínio base: " BASE_DOMAIN < /dev/tty
+            read -p "  Domínio base (ex: empresa.com.br): " BASE_DOMAIN < /dev/tty
             BASE_DOMAIN=$(echo "$BASE_DOMAIN" | tr -d ' ' | tr '[:upper:]' '[:lower:]')
             [[ "$BASE_DOMAIN" =~ \. ]] && break
             erro "Inválido."
         done
-        echo -e "  ${CYAN}Subdomínios para .${BASE_DOMAIN}:${NC}"
+        echo -e "  ${CYAN}Subdomínios para .${BASE_DOMAIN} (ex: painel n8n api):${NC}"
         while true; do
-            read -p "  Subdomínios: " SUBS_INPUT < /dev/tty
+            read -p "  Subdomínios (separados por espaço): " SUBS_INPUT < /dev/tty
             [ -n "$SUBS_INPUT" ] && break
             erro "Obrigatório."
         done
