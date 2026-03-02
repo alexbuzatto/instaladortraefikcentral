@@ -201,10 +201,6 @@ diagnostico_sistema() {
         step "servers.yml atual"
         cat "$SERVERS_FILE" | sed 's/^/  /'
     fi
-
-    echo -e "\n  ${CYAN}1)${NC} Ver logs  ${CYAN}0)${NC} Voltar"
-    read -p "Escolha: " OPT_LOG < /dev/tty
-    [ "$OPT_LOG" = "1" ] && { verificar_logs_recentes 50; docker service logs -f traefik-central_traefik-central 2>/dev/null || true; }
 }
 
 # ============================================================================
@@ -1087,7 +1083,13 @@ while true; do
             verificar_pos_instalacao
             resumo_final
             ;;
-        2) diagnostico_sistema; pausar ;;
+        2)
+            diagnostico_sistema
+            echo -e "\n  ${CYAN}1)${NC} Ver logs  ${CYAN}0)${NC} Voltar"
+            read -p "Escolha: " OPT_LOG < /dev/tty
+            [ "$OPT_LOG" = "1" ] && { verificar_logs_recentes 50; }
+            pausar
+            ;;
         3) verificar_traefik_existente; pausar ;;
         4) verificar_traefik_existente; menu_remocao; pausar ;;
         5) criar_script_auxiliar; menu_gerenciar_servidores; pausar ;;
