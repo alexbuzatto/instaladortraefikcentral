@@ -819,7 +819,7 @@ adicionar_servidor() {
 selecionar_servidor() {
     local SERVERS_FILE="/root/traefik-central/dynamic-config/servers.yml"
     ROUTERS=$(grep -E "^    [a-zA-Z0-9_-]+-https:" "$SERVERS_FILE" 2>/dev/null | \
-        sed 's/://g; s/^[[:space:]]//; s/-https$//' || true)
+        sed 's/://g' | sed 's/^[[:space:]]*//' | sed 's/[[:space:]]*$//' | sed 's/-https$//' || true)
     [ -z "$ROUTERS" ] && { warn "Nenhum servidor."; SERVER_NAME_SEL=""; return 1; }
 
     mapfile -t SRV_ARRAY <<< "$ROUTERS"
@@ -839,7 +839,7 @@ selecionar_servidor() {
         [[ "$SEL" =~ ^[0-9]+$ ]] && [ "$SEL" -ge 1 ] && [ "$SEL" -le "${#SRV_ARRAY[@]}" ] && break
         erro "Inválido."
     done
-    SERVER_NAME_SEL="${SRV_ARRAY[$((SEL-1))]}"
+    SERVER_NAME_SEL=$(echo "${SRV_ARRAY[$((SEL-1))]}" | tr -d ' ')
     ok "Selecionado: $SERVER_NAME_SEL"
 }
 
@@ -853,16 +853,45 @@ adicionar_dominio() {
     selecionar_servidor "Qual servidor?" || return
     SERVER_NAME="$SERVER_NAME_SEL"
 
+    # Extrair domínios existentes da rule do servidor selecionado
+    SERVER_NAME=$(echo "$SERVER_NAME_SEL" | tr -d ' ')
+    RULE_LINE=$(grep -A1 "^    ${SERVER_NAME}-https:" "$SERVERS_FILE" | grep "rule:" || echo "")
     mapfile -t EXISTING_DOMS < <(
-        awk "/^    ${SERVER_NAME}-https:/,/entryPoints:/" "$SERVERS_FILE" \
-        | grep -oP "(?<=HostSNI\(\`)([^\`]+)(?=\`\))" || true)
+        echo "$RULE_LINE" | grep -oP "(?<=HostSNI\(\`)([^\`]+)(?=\`\))" || true)
 
-    mapfile -t BASE_ARRAY < <(printf "%s\n" "${EXISTING_DOMS[@]}" \
-        | awk -F. '{OFS="."; $1=""; print substr($0,2)}' | sort -u)
+    if [ ${#EXISTING_DOMS[@]} -eq 0 ]; then
+        warn "Não foi possível extrair domínios de '${SERVER_NAME}'. Verifique o servers.yml."
+        return
+    fi
 
+    echo -e "\n  ${WHITE}Domínios atuais de '${SERVER_NAME}':${NC}"
+    for d in "${EXISTING_DOMS[@]}"; do info "  $d"; done
+    echo
+
+    # Extrair domínios base únicos (tudo após o primeiro segmento)
+    mapfile -t BASE_ARRAY < <(
+        printf "%s\n" "${EXISTING_DOMS[@]}" | python3 -c "
+import sys
+bases = set()
+for line in sys.stdin:
+    parts = line.strip().split('.')
+    if len(parts) >= 2:
+        bases.add('.'.join(parts[1:]))
+for b in sorted(bases): print(b)
+" || true)
+
+    if [ ${#BASE_ARRAY[@]} -eq 0 ]; then
+        warn "Não foi possível extrair domínios base."
+        return
+    fi
+
+    echo -e "  ${YELLOW}Selecione o domínio base para os novos subdomínios:${NC}\n"
     local i=1
-    for base in "${BASE_ARRAY[@]}"; do echo -e "  ${CYAN}${i})${NC} .${base}"; i=$((i+1)); done
-    echo -e "  ${CYAN}${i})${NC} Outro"
+    for base in "${BASE_ARRAY[@]}"; do
+        echo -e "  ${CYAN}${i})${NC} ${WHITE}.${base}${NC}"
+        i=$((i+1))
+    done
+    echo -e "  ${CYAN}${i})${NC} Outro domínio base (digitar manualmente)\n"
 
     while true; do
         read -p "  Base [1-${i}]: " SEL_BASE < /dev/tty
@@ -872,12 +901,34 @@ adicionar_dominio() {
 
     NEW_DOMAINS_LIST=()
     if [ "$SEL_BASE" -eq "$i" ]; then
-        read -p "  Domínio completo: " FD < /dev/tty
-        NEW_DOMAINS_LIST=("$(echo "$FD" | tr -d ' ')")
+        while true; do
+            read -p "  Dominio base (ex: outrodominio.com.br): " NEW_BASE < /dev/tty
+            NEW_BASE=$(echo "$NEW_BASE" | tr -d ' ' | tr '[:upper:]' '[:lower:]')
+            [[ "$NEW_BASE" =~ \. ]] && break
+            erro "Dominio invalido."
+        done
+        echo -e "  ${CYAN}Subdominios para ${WHITE}.${NEW_BASE}${NC} ${BLUE}(separados por espaco):${NC}"
+        echo -e "  ${WHITE}Ex: painel api n8n typebot${NC}"
+        while true; do
+            read -p "  Subdominios: " SUBS < /dev/tty
+            [ -n "$SUBS" ] && break
+            erro "Informe pelo menos um."
+        done
+        for sub in $SUBS; do
+            NEW_DOMAINS_LIST+=("$(echo "$sub" | tr -d ' .').${NEW_BASE}")
+        done
     else
         CHOSEN_BASE="${BASE_ARRAY[$((SEL_BASE-1))]}"
-        read -p "  Subdomínios para .${CHOSEN_BASE}: " SUBS < /dev/tty
-        for sub in $SUBS; do NEW_DOMAINS_LIST+=("$(echo "$sub" | tr -d ' .').${CHOSEN_BASE}"); done
+        echo -e "  ${CYAN}Subdominios para ${WHITE}.${CHOSEN_BASE}${NC} ${BLUE}(separados por espaco):${NC}"
+        echo -e "  ${WHITE}Ex: painel api n8n typebot${NC}"
+        while true; do
+            read -p "  Subdominios: " SUBS < /dev/tty
+            [ -n "$SUBS" ] && break
+            erro "Informe pelo menos um."
+        done
+        for sub in $SUBS; do
+            NEW_DOMAINS_LIST+=("$(echo "$sub" | tr -d ' .').${CHOSEN_BASE}")
+        done
     fi
 
     ADDED=()
@@ -991,25 +1042,26 @@ listar_servidores() {
     local SERVERS_FILE="/root/traefik-central/dynamic-config/servers.yml"
     garantir_servers_yml
 
-    ROUTERS=$(grep -E "^\s{4}[a-zA-Z0-9_-]+-https:" "$SERVERS_FILE" | \
-        sed 's/://g; s/^[[:space:]]//; s/-https$//' || true)
+    mapfile -t SRV_NAMES < <(grep -E "^    [a-zA-Z0-9_-]+-https:" "$SERVERS_FILE" 2>/dev/null | \
+        sed 's/://g' | sed 's/^[[:space:]]*//' | sed 's/[[:space:]]*$//' | sed 's/-https$//' || true)
 
-    if [ -n "$ROUTERS" ]; then
-        while IFS= read -r r; do
-            ADDR=$(awk "/^    ${r}-https-svc:/{f=1} f && /address:/{print; exit}" "$SERVERS_FILE" | \
-                grep -oP '"[^"]+"' | tr -d '"' || echo "?")
-            RULE=$(awk "/^    ${r}-https:/{f=1} f && /rule:/{print; exit}" "$SERVERS_FILE" | \
-                sed -E 's/HostSNI\(`//g; s/`\)//g; s/ \|\| /, /g; s/rule: "//g; s/"$//g' | xargs || echo "?")
-            COUNT=$(echo "$RULE" | tr ',' '\n' | wc -l)
+    if [ ${#SRV_NAMES[@]} -gt 0 ]; then
+        for r in "${SRV_NAMES[@]}"; do
+            r=$(echo "$r" | tr -d ' ')
+            ADDR=$(grep -A3 "^    ${r}-https-svc:" "$SERVERS_FILE" | grep "address:" | \
+                grep -oP '(?<=address: ")[^"]+' || echo "?")
+            RULE_LINE=$(grep -A1 "^    ${r}-https:" "$SERVERS_FILE" | grep "rule:" || echo "")
+            DOMS=$(echo "$RULE_LINE" | grep -oP '(?<=HostSNI\(`)([^`]+)(?=`\))' | tr '\n' ',' | sed 's/,$//' || echo "?")
+            COUNT=$(echo "$RULE_LINE" | grep -oP '(?<=HostSNI\(`)([^`]+)(?=`\))' | wc -l || echo 0)
             echo -e "  ${GREEN}✔ ${r}${NC}"
-            info "  IP: $ADDR | Domínios ($COUNT): $RULE"
+            info "  IP: $ADDR"
+            info "  Domínios ($COUNT): $DOMS"
             echo
-        done <<< "$ROUTERS"
+        done
     else
         warn "Nenhum servidor configurado."
     fi
 }
-
 # ============================================================================
 # MENU GERENCIAR
 # ============================================================================
