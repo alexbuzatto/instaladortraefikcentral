@@ -1219,8 +1219,8 @@ listar_servidores() {
 # MENU GERENCIAR SERVIDORES
 # ============================================================================
 menu_gerenciar_servidores() {
-    header "🖥️ GERENCIAR SERVIDORES (ORION / CLIENTES)"
-    echo -e "  ${CYAN}1)${NC} Vincular novo servidor Orion"
+    header "🖥️ GERENCIAR SERVIDORES ( / CLIENTES)"
+    echo -e "  ${CYAN}1)${NC} Vincular novo servidor "
     echo -e "  ${CYAN}2)${NC} Adicionar domínio a servidor existente"
     echo -e "  ${CYAN}3)${NC} Remover domínio de servidor existente"
     echo -e "  ${CYAN}4)${NC} Remover servidor completo"
