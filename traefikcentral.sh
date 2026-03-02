@@ -592,7 +592,6 @@ EOF
     cat > "$BASE_DIR/dynamic-config/dashboard.yml" <<EOF
 # Dashboard do Traefik Central
 # Acesso: http://${DASH_DOMAIN}:8080 OU http://[SEU-IP]:8080
-# Nota: Configurado sem SSL para evitar bloqueios de Rate Limit.
 http:
   routers:
     dashboard-http:
@@ -603,19 +602,8 @@ http:
       middlewares:
         - dashboard-redirect@file
         - basicauth@file
-
-  middlewares:
-    dashboard-redirect:
-      redirectRegex:
-        regex: "^(http|https)://([^/]+)/?\$"
-        replacement: "\${1}://\${2}/dashboard/"
-
-    basicauth:
-      basicAuth:
-        users:
-          - "${DASH_USER}:${HASH}"
 EOF
-    ok "dashboard.yml criado com proteção por senha"
+    ok "dashboard.yml criado"
 
     # ------------------------------------------------------------------
     # middlewares.yml (Cabeçalhos de proxy para Let's Encrypt funcionar)
@@ -630,6 +618,16 @@ http:
         customRequestHeaders:
           X-Forwarded-For: ""
           X-Real-Ip: ""
+
+    dashboard-redirect:
+      redirectRegex:
+        regex: "^(http|https)://([^/]+)/?\$"
+        replacement: "\${1}://\${2}/dashboard/"
+
+    basicauth:
+      basicAuth:
+        users:
+          - "${DASH_USER}:${HASH}"
 EOF
     ok "middlewares.yml criado"
 
