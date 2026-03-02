@@ -906,10 +906,9 @@ for b in sorted(bases): print(b)
     read -p "  Confirmar? (s/N): " CONF < /dev/tty
     [[ "$CONF" =~ ^[Ss]$ ]] || { warn "Cancelado."; return; }
 
-    RULE_TCP=""; RULE_HTTP=""
+    RULE=""
     for dom in "${ALL_FINAL[@]}"; do
-        [ -n "$RULE_TCP" ] && RULE_TCP="${RULE_TCP} || "
-        [ -n "$RULE_HTTP" ] && RULE_HTTP="${RULE_HTTP} || "
+        [ -n "$RULE" ] && RULE="${RULE} || "
         RULE="${RULE}Host(\`${dom}\`)"
     done
 
