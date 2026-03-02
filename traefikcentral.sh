@@ -1043,6 +1043,7 @@ adicionar_dominio() {
     else
         CHOSEN_BASE="${BASE_ARRAY[$((SEL_BASE-1))]}"
         echo -e "\n  ${CYAN}Subdomínios para ${WHITE}.${CHOSEN_BASE}${NC}"
+        echo -e "  ${WHITE}Ex: n8n unichat painel evolution${NC} ${BLUE}(separados por espaço)${NC}"
         while true; do
             read -p "  Subdomínios: " SUBDOMAIN_INPUT < /dev/tty
             [ -n "$SUBDOMAIN_INPUT" ] && break
