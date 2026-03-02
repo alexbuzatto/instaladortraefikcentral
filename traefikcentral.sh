@@ -1492,7 +1492,6 @@ menu_principal() {
     echo -e "  ${CYAN}4)${NC} ${RED}Remover Traefik instalado${NC}"
     echo -e "  ${CYAN}5)${NC} ${GREEN}Gerenciar servidores/domínios${NC}"
     echo -e "  ${CYAN}6)${NC} ${WHITE}Listar servidores configurados${NC}"
-    echo -e "  ${CYAN}7)${NC} ${YELLOW}🔧 Corrigir Traefik deste servidor (para servidores destino)${NC}"
     echo -e "  ${CYAN}0)${NC} ${WHITE}Sair${NC}\n"
     separador
     read -p "Escolha: " OPCAO_MENU < /dev/tty
@@ -1529,7 +1528,6 @@ while true; do
         4) verificar_traefik_existente; menu_remocao; pausar ;;
         5) menu_gerenciar_servidores; pausar ;;
         6) listar_servidores; pausar ;;
-        7) corrigir_traefik_local; pausar ;;
         0) echo -e "\n${GREEN}Saindo. Até mais!${NC}\n"; exit 0 ;;
         *) erro "Opção inválida."; sleep 2 ;;
     esac
