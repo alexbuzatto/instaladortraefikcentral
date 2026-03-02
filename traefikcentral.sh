@@ -70,10 +70,8 @@ diagnostico_sistema() {
     ok "Arquitetura: $(uname -m)"
 
     step "Memória RAM"
-    # Tenta usar /proc/meminfo que é mais universal que o comando 'free'
     MEM_TOTAL=$(grep MemTotal /proc/meminfo | awk '{print int($2/1024)}' || echo 0)
     MEM_AVAIL=$(grep MemAvailable /proc/meminfo | awk '{print int($2/1024)}' || grep MemFree /proc/meminfo | awk '{print int($2/1024)}' || echo 0)
-    
     if [ "$MEM_AVAIL" -lt 256 ]; then
         warn "RAM: ${MEM_AVAIL}MB disponível / ${MEM_TOTAL}MB total (recomendado mínimo 256MB)"
     else
@@ -81,7 +79,6 @@ diagnostico_sistema() {
     fi
 
     step "Espaço em Disco"
-    # df -Pk garante que a saída seja em uma única linha e em KB
     DISCO_LIVRE=$(df -Pk / | awk 'NR==2 {print int($4/1024)}')
     if [ "$DISCO_LIVRE" -lt 1024 ]; then
         warn "Disco livre: ${DISCO_LIVRE}MB (muito baixo!)"
@@ -133,7 +130,6 @@ diagnostico_sistema() {
         echo -e "${NC}"
     fi
 
-    # Oferecer ver logs se quiser
     echo -e "\n  ${CYAN}1)${NC} Ver logs em tempo real (Ctrl+C para sair)"
     echo -e "  ${CYAN}0)${NC} Voltar"
     read -p "Escolha: " OPT_LOG < /dev/tty
@@ -366,9 +362,6 @@ coletar_configuracoes() {
     HASH_ESCAPED=$(echo "$HASH" | sed 's/\$/\$\$/g')
     ok "Dashboard configurado: https://${DASH_DOMAIN}:8080"
 
-    # -------------------------------------------------------------------------
-    # SERVIDORES DESTINO
-    # -------------------------------------------------------------------------
     separador
     echo -e "\n${YELLOW}🖥️ SERVIDORES DESTINO:${NC}"
     echo -e "${CYAN}  Estratégia: HTTP Passthrough (porta 80) + TCP Passthrough (porta 443)${NC}"
@@ -423,14 +416,12 @@ coletar_configuracoes() {
             erro "Informe pelo menos um domínio."
         done
 
-        # ---- Formatar domínios para as Rules ----
         IFS=',' read -ra DOM_ARRAY <<< "$DOMAINS"
         RULE_TCP=""
         RULE_HTTP=""
         for dom in "${DOM_ARRAY[@]}"; do
             [ -n "$RULE_TCP" ] && RULE_TCP="${RULE_TCP} || "
             [ -n "$RULE_HTTP" ] && RULE_HTTP="${RULE_HTTP} || "
-            
             if [[ "$dom" == \*.* ]]; then
                 base=${dom#*.}
                 RULE_TCP="${RULE_TCP}HostSNIRegexp(\`{subdomain:[a-zA-Z0-9-_.]+}.${base}\`) || HostSNI(\`${base}\`)"
@@ -441,7 +432,6 @@ coletar_configuracoes() {
             fi
         done
 
-        # ---- Acumular config TCP (porta 443 - passthrough) ----
         ROUTERS_TCP_CONFIG="${ROUTERS_TCP_CONFIG}
     ${SERVER_NAME}-https:
       rule: \"${RULE_TCP}\"
@@ -457,8 +447,6 @@ coletar_configuracoes() {
         servers:
           - address: \"${SERVER_IP}:${SERVER_PORT_HTTPS}\"
 "
-
-        # ---- Acumular config HTTP (porta 80 - proxy reverso) ----
         ROUTERS_HTTP_CONFIG="${ROUTERS_HTTP_CONFIG}
     ${SERVER_NAME}-http:
       rule: \"${RULE_HTTP}\"
@@ -497,53 +485,28 @@ criar_arquivos() {
     mkdir -p "$BASE_DIR/dynamic-config"
     cd "$BASE_DIR"
 
-    # ------------------------------------------------------------------
-    # docker-compose.yml
-    # ------------------------------------------------------------------
     step "docker-compose.yml..."
     cat > "$BASE_DIR/docker-compose.yml" <<EOF
 version: "3.8"
-
-# ============================================================================
-# TRAEFIK CENTRAL
-# ============================================================================
-# Estratégia: HTTP Proxy (80) + TCP Passthrough (443)
-# Os servidores de destino continuam gerando seus próprios certificados.
-# ============================================================================
 
 services:
   traefik-central:
     image: traefik:v3.3
     command:
-      # Dashboard
       - "--api.dashboard=true"
       - "--api.insecure=false"
-
-      # EntryPoints
       - "--entrypoints.web.address=:80"
       - "--entrypoints.websecure.address=:443"
       - "--entrypoints.dashboard.address=:8080"
-
-      # Estratégia Orion: O tráfego HTTP na porta 80 precisa chegar aos servidores destino
-      # para que o Let's Encrypt deles consiga renovar os certificados (HTTP Challenge).
-      # O redirecionamento para HTTPS deve ocorrer APENAS nos servidores de destino.
-
-      # Provider: Swarm
       - "--providers.swarm=true"
       - "--providers.swarm.endpoint=unix:///var/run/docker.sock"
       - "--providers.swarm.exposedbydefault=false"
       - "--providers.swarm.network=traefik-central-net"
-
-      # Provider: File (rotas TCP e HTTP para os servidores)
       - "--providers.file.directory=/etc/traefik/dynamic"
       - "--providers.file.watch=true"
-
-      # Let's Encrypt SOMENTE para o dashboard do Central (via TLS-ALPN-01 para não interferir na porta 80)
       - "--certificatesresolvers.letsencrypt.acme.tlschallenge=true"
       - "--certificatesresolvers.letsencrypt.acme.email=${EMAIL}"
       - "--certificatesresolvers.letsencrypt.acme.storage=/etc/traefik/certificates/acme.json"
-
-      # Logs
       - "--log.level=INFO"
       - "--accesslog=true"
 
@@ -585,13 +548,8 @@ volumes:
 EOF
     ok "docker-compose.yml criado"
 
-    # ------------------------------------------------------------------
-    # dashboard.yml (HTTP Simples com Senha)
-    # ------------------------------------------------------------------
     step "dynamic-config/dashboard.yml..."
     cat > "$BASE_DIR/dynamic-config/dashboard.yml" <<EOF
-# Dashboard do Traefik Central
-# Acesso: http://${DASH_DOMAIN}:8080 OU http://[SEU-IP]:8080
 http:
   routers:
     dashboard-http:
@@ -605,12 +563,8 @@ http:
 EOF
     ok "dashboard.yml criado"
 
-    # ------------------------------------------------------------------
-    # middlewares.yml (Cabeçalhos de proxy para Let's Encrypt funcionar)
-    # ------------------------------------------------------------------
     step "dynamic-config/middlewares.yml..."
     cat > "$BASE_DIR/dynamic-config/middlewares.yml" <<EOF
-# Middlewares globais do Traefik Central
 http:
   middlewares:
     proxy-headers:
@@ -631,28 +585,11 @@ http:
 EOF
     ok "middlewares.yml criado"
 
-    # ------------------------------------------------------------------
-    # servers.yml (TCP passthrough 443 + HTTP proxy 80)
-    # ------------------------------------------------------------------
     step "dynamic-config/servers.yml..."
-
     if [ "$SERVER_COUNT" -gt 0 ]; then
         cat > "$BASE_DIR/dynamic-config/servers.yml" <<EOF
 # ============================================================================
 # ROTEAMENTO - TRAEFIK CENTRAL
-# ============================================================================
-#
-# PORTA 443 — TCP Passthrough (HostSNI)
-#   O Traefik Central identifica o servidor pelo SNI do TLS e encaminha
-#   o pacote SEM descriptografar. Os certificados ficam nos servidores locais.
-#
-# PORTA 80 — HTTP Proxy (Host header)
-#   O Traefik Central faz proxy do HTTP para o servidor correto.
-#   Isso é ESSENCIAL para que o Let's Encrypt dos servidores de destino
-#   consiga renovar certificados via HTTP Challenge.
-#
-# ⚠️ Para adicionar novos servidores: edite este arquivo.
-#    O Traefik recarrega automaticamente (watch=true).
 # ============================================================================
 
 # ---- PORTA 443: TCP PASSTHROUGH ----
@@ -671,40 +608,6 @@ ${SERVICES_HTTP_CONFIG}
 EOF
     else
         cat > "$BASE_DIR/dynamic-config/servers.yml" <<EOF
-# ============================================================================
-# ROTEAMENTO - TRAEFIK CENTRAL
-# ============================================================================
-# Nenhum servidor configurado ainda. Adicione abaixo seguindo o padrão:
-#
-# tcp:
-#   routers:
-#     srv1-https:
-#       rule: "HostSNI(`app.dominio.com`)"
-#       entryPoints: [websecure]
-#       service: srv1-https-svc
-#       tls:
-#         passthrough: true
-#   services:
-#     srv1-https-svc:
-#       loadBalancer:
-#         servers:
-#           - address: "1.2.3.4:443"
-#
-# http:
-#   routers:
-#     srv1-http:
-#       rule: "Host(`app.dominio.com`)"
-#       entryPoints: [web]
-#       service: srv1-http-svc
-#       priority: 100
-#   services:
-#     srv1-http-svc:
-#       loadBalancer:
-#         passHostHeader: true
-#         servers:
-#           - url: "http://1.2.3.4:80"
-# ============================================================================
-
 # Nenhum servidor configurado ainda.
 # Use o menu opção 5 para adicionar servidores.
 EOF
@@ -714,7 +617,7 @@ EOF
 }
 
 # ============================================================================
-# CRIAR SCRIPT PYTHON AUXILIAR (usado pela remoção de servidores)
+# CRIAR SCRIPT PYTHON AUXILIAR
 # ============================================================================
 criar_script_auxiliar() {
 
@@ -790,8 +693,6 @@ for line in lines:
         result.append(line)
 
 content = "".join(result)
-
-# Verificar se ainda ha servidores apos remocao
 has_routers = bool(re.search(r"^    [a-zA-Z]", content, re.MULTILINE))
 
 if not has_routers:
@@ -819,7 +720,6 @@ PYREMOVE
 fazer_deploy() {
     header "🚀 DEPLOY DO TRAEFIK CENTRAL"
 
-    # Criar script Python auxiliar para remoção de servidores
     criar_script_auxiliar
 
     step "Rede overlay traefik-central-net..."
@@ -891,13 +791,13 @@ resumo_final() {
     echo -e "  ${YELLOW}1.${NC} Aponte o DNS/Mikrotik de todos os domínios para o IP deste servidor Central"
     echo -e "  ${YELLOW}2.${NC} Verifique se o dashboard carrega em https://${DASH_DOMAIN}:8080"
     echo -e "  ${YELLOW}3.${NC} Teste o acesso a cada aplicação dos servidores de destino"
-    echo -e "  ${YELLOW}4.${NC} Confirme que os certificados dos servidores continuam renovando"
+    echo -e "  ${YELLOW}4.${NC} ${RED}Execute esta opção 7 nos servidores destino para corrigir o Let's Encrypt!${NC}"
     separador
 
     echo -e "\n${WHITE}${BOLD}  ARQUIVOS${NC}"
     echo -e "  ${CYAN}/root/traefik-central/docker-compose.yml${NC}"
     echo -e "  ${CYAN}/root/traefik-central/dynamic-config/dashboard.yml${NC}"
-    echo -e "  ${CYAN}/root/traefik-central/dynamic-config/servers.yml${NC}  ← edite para adicionar servidores"
+    echo -e "  ${CYAN}/root/traefik-central/dynamic-config/servers.yml${NC}"
 
     separador
     echo -e "\n${WHITE}${BOLD}  COMANDOS ÚTEIS${NC}"
@@ -914,9 +814,6 @@ resumo_final() {
     echo -e "${BLUE}================================================================${NC}\n"
 }
 
-# ============================================================================
-# MENU PRINCIPAL
-# ============================================================================
 # ============================================================================
 # GARANTIR QUE servers.yml EXISTE
 # ============================================================================
@@ -940,34 +837,6 @@ SERVERS_EMPTY
 }
 
 # ============================================================================
-# LISTAR SERVIDORES CONFIGURADOS
-# ============================================================================
-listar_servidores() {
-    header "📋 SERVIDORES CONFIGURADOS"
-    local SERVERS_FILE="/root/traefik-central/dynamic-config/servers.yml"
-
-    garantir_servers_yml
-
-    step "Roteadores TCP (porta 443 - Passthrough)..."
-    ROUTERS=$(grep -E "^\s{4}[a-zA-Z0-9_-]+-https:" "$SERVERS_FILE" | sed 's/://g' | sed 's/^[[:space:]]*//' || true)
-    if [ -n "$ROUTERS" ]; then
-        while IFS= read -r router; do
-            # Pegar a rule (domínios) do router
-            RULE=$(awk "/^    ${router}:/{found=1} found && /rule:/{print; exit}" "$SERVERS_FILE" | grep -oP '(?<=HostSNI\().*(?=\))' || echo "domínios não encontrados")
-            # Pegar o endereço do service correspondente
-            SVC="${router//-https/-https-svc}"
-            ADDR=$(awk "/^    ${SVC}:/{found=1} found && /address:/{print; exit}" "$SERVERS_FILE" | grep -oP '"[^"]+"' | tr -d '"' || echo "endereço não encontrado")
-            echo -e "  ${GREEN}✔ ${router/-https/}${NC}"
-            info "  Domínios: $RULE"
-            info "  Endereço: $ADDR"
-            echo
-        done <<< "$ROUTERS"
-    else
-        warn "Nenhum servidor configurado ainda."
-    fi
-}
-
-# ============================================================================
 # ADICIONAR SERVIDOR
 # ============================================================================
 adicionar_servidor() {
@@ -978,7 +847,6 @@ adicionar_servidor() {
 
     echo -e "${CYAN}  Informe os dados do novo servidor:${NC}\n"
 
-    # Nome do servidor
     while true; do
         read -p "  Nome do servidor (ex: srv2): " SERVER_NAME < /dev/tty
         [ -z "$SERVER_NAME" ] && { erro "Nome não pode ser vazio."; continue; }
@@ -987,7 +855,6 @@ adicionar_servidor() {
         break
     done
 
-    # IP
     echo -e "  ${CYAN}IP do servidor (privado se mesma LAN, público se externo):${NC}"
     while true; do
         read -p "  IP do servidor: " SERVER_IP < /dev/tty
@@ -995,7 +862,6 @@ adicionar_servidor() {
         erro "IP inválido. Formato: 192.168.25.102"
     done
 
-    # Teste de conectividade opcional
     read -p "  Testar conectividade com $SERVER_IP? (S/n): " TEST_CONN < /dev/tty
     if [[ ! "$TEST_CONN" =~ ^[Nn]$ ]]; then
         step "Testando ping..."
@@ -1019,23 +885,18 @@ adicionar_servidor() {
     read -p "  Porta HTTP [80]: " SERVER_PORT_HTTP < /dev/tty
     SERVER_PORT_HTTP="${SERVER_PORT_HTTP:-80}"
 
-    # Coletar domínios por domínio base
     ALL_DOMAINS=()
     separador
-    echo -e "\n  ${YELLOW}📋 CONFIGURAÇÃO DE DOMÍNIOS (MODELO ORION)${NC}"
-    echo -e "  ${CYAN}Você pode adicionar subdomínios de um ou mais domínios base.${NC}"
-    echo -e "  ${WHITE}Isso funcionará com seus certificados atuais sem alteração.${NC}\n"
+    echo -e "\n  ${YELLOW}📋 CONFIGURAÇÃO DE DOMÍNIOS${NC}\n"
 
     while true; do
-        # Pedir domínio base
         while true; do
             read -p "  Domínio base (ex: eclicksolucoes.com.br): " BASE_DOMAIN < /dev/tty
             BASE_DOMAIN=$(echo "$BASE_DOMAIN" | tr -d ' ' | tr '[:upper:]' '[:lower:]')
             [[ "$BASE_DOMAIN" =~ \. ]] && break
-            erro "Domínio inválido. Ex: eclicksolucoes.com.br"
+            erro "Domínio inválido."
         done
 
-        # Pedir subdomínios
         echo -e "  ${CYAN}Subdomínios para ${WHITE}.${BASE_DOMAIN}${NC}"
         echo -e "  ${WHITE}Ex: painel api n8n typebot${NC} ${BLUE}(separados por espaço)${NC}"
         while true; do
@@ -1044,7 +905,6 @@ adicionar_servidor() {
             erro "Informe pelo menos um subdomínio."
         done
 
-        # Montar e mostrar domínios gerados
         echo -e "\n  ${GREEN}Domínios gerados:${NC}"
         for sub in $SUBS_INPUT; do
             sub=$(echo "$sub" | tr -d ' ' | tr -d '.' | tr '[:upper:]' '[:lower:]')
@@ -1059,18 +919,15 @@ adicionar_servidor() {
         echo
     done
 
-    # Formatar rules completas (TCP e HTTP)
     RULE_TCP=""
     RULE_HTTP=""
     for dom in "${ALL_DOMAINS[@]}"; do
         [ -n "$RULE_TCP" ] && RULE_TCP="${RULE_TCP} || "
         [ -n "$RULE_HTTP" ] && RULE_HTTP="${RULE_HTTP} || "
-        
         RULE_TCP="${RULE_TCP}HostSNI(\`${dom}\`)"
         RULE_HTTP="${RULE_HTTP}Host(\`${dom}\`)"
     done
 
-    # Resumo final
     separador
     echo -e "\n  ${YELLOW}Resumo — confirmar adição:${NC}"
     info "  Servidor: $SERVER_NAME"
@@ -1083,21 +940,11 @@ adicionar_servidor() {
     read -p "  Confirmar? (s/N): " CONF < /dev/tty
     [[ "$CONF" =~ ^[Ss]$ ]] || { warn "Cancelado."; return; }
 
-    # Fazer backup
     cp "$SERVERS_FILE" "${SERVERS_FILE}.bak"
-
-    # Gravar no arquivo via Python
     python3 /tmp/traefik_add.py "$SERVERS_FILE" "$SERVER_NAME" "$SERVER_IP" "$SERVER_PORT_HTTPS" "$SERVER_PORT_HTTP" "$RULE_TCP" "$RULE_HTTP"
 
     ok "Servidor '${SERVER_NAME}' adicionado com sucesso!"
     info "O Traefik recarrega automaticamente (watch=true)."
-    info "Backup salvo em: ${SERVERS_FILE}.bak"
-
-    echo -e "
-  ${WHITE}Domínios configurados:${NC}"
-    for dom in "${ALL_DOMAINS[@]}"; do
-        echo -e "    ${CYAN}→${NC} $dom"
-    done
 
     step "Verificando logs..."
     sleep 4
@@ -1110,13 +957,10 @@ adicionar_servidor() {
     fi
 }
 
-
 # ============================================================================
-# SELECIONAR SERVIDOR (menu numerado reutilizável)
+# SELECIONAR SERVIDOR
 # ============================================================================
 selecionar_servidor() {
-    # Uso: selecionar_servidor "mensagem"
-    # Retorna: $SERVER_NAME_SEL
     local SERVERS_FILE="/root/traefik-central/dynamic-config/servers.yml"
     local MSG="${1:-Selecione o servidor:}"
 
@@ -1128,16 +972,13 @@ selecionar_servidor() {
         return 1
     fi
 
-    # Montar array
     mapfile -t SRV_ARRAY <<< "$ROUTERS"
 
     echo -e "\n  ${YELLOW}${MSG}${NC}\n"
     local i=1
     for srv in "${SRV_ARRAY[@]}"; do
-        # Pegar domínios do servidor (suporta HostSNI e HostSNIRegexp)
         RULE_LINE=$(awk "/^    ${srv}-https:/{found=1} found && /rule:/{print; exit}" "$SERVERS_FILE" || echo "")
-        # Extrair domínios usando sed de forma robusta e trocando a regex moderna por um asterisco (para legibilidade de configs passadas)
-        DOMS=$(echo "$RULE_LINE" | sed -E 's/HostSNI(Regexp)?\(`//g; s/`\)//g; s/\{subdomain:\[a-zA-Z0-9-\]\+\}\\\./*\./g; s/\^.+\\.//g; s/\\\$//g; s/\\//g; s/ \|\| /, /g; s/rule: "//g; s/"$//g' | xargs || echo "?")
+        DOMS=$(echo "$RULE_LINE" | sed -E 's/HostSNI(Regexp)?\(`//g; s/`\)//g; s/ \|\| /, /g; s/rule: "//g; s/"$//g' | xargs || echo "?")
         echo -e "  ${CYAN}${i})${NC} ${WHITE}${srv}${NC}"
         [ -n "$DOMS" ] && echo -e "     ${BLUE}↳ ${DOMS}${NC}"
         i=$((i+1))
@@ -1148,7 +989,7 @@ selecionar_servidor() {
         read -p "  Escolha [1-$((i-1))]: " SEL < /dev/tty
         [ "$SEL" = "0" ] && { SERVER_NAME_SEL=""; return 1; }
         [[ "$SEL" =~ ^[0-9]+$ ]] && [ "$SEL" -ge 1 ] && [ "$SEL" -le "${#SRV_ARRAY[@]}" ] && break
-        erro "Opção inválida. Digite um número entre 1 e ${#SRV_ARRAY[@]}."
+        erro "Opção inválida."
     done
 
     SERVER_NAME_SEL="${SRV_ARRAY[$((SEL-1))]}"
@@ -1163,24 +1004,19 @@ adicionar_dominio() {
     local SERVERS_FILE="/root/traefik-central/dynamic-config/servers.yml"
 
     garantir_servers_yml
-
-    # 1. Selecionar servidor
     selecionar_servidor "Qual servidor deseja adicionar domínio?" || return
     SERVER_NAME="$SERVER_NAME_SEL"
 
-    # 2. Extrair domínios já existentes (para mostrar base e checar duplicatas)
     mapfile -t EXISTING_DOMS < <(
         awk "/^    ${SERVER_NAME}-https:/,/entryPoints:/" "$SERVERS_FILE" \
         | grep -oP "(?<=HostSNI\(\`)([^\`]+)(?=\`\))" || true
     )
 
-    # Extrair domínios base únicos
     mapfile -t BASE_ARRAY < <(
         printf "%s\n" "${EXISTING_DOMS[@]}" \
         | awk -F. '{OFS="."; $1=""; print substr($0,2)}' | sort -u
     )
 
-    # 3. Escolher domínio base
     echo -e "\n  ${YELLOW}Selecione o domínio base:${NC}\n"
     local i=1
     for base in "${BASE_ARRAY[@]}"; do
@@ -1195,7 +1031,6 @@ adicionar_dominio() {
         erro "Opção inválida."
     done
 
-    # 4. Coletar novos subdomínios
     NEW_DOMAINS_LIST=()
     if [ "$SEL_BASE" -eq "$i" ]; then
         while true; do
@@ -1208,7 +1043,6 @@ adicionar_dominio() {
     else
         CHOSEN_BASE="${BASE_ARRAY[$((SEL_BASE-1))]}"
         echo -e "\n  ${CYAN}Subdomínios para ${WHITE}.${CHOSEN_BASE}${NC}"
-        echo -e "  ${WHITE}Ex: n8n unichat evolution${NC} ${BLUE}(separados por espaço)${NC}"
         while true; do
             read -p "  Subdomínios: " SUBDOMAIN_INPUT < /dev/tty
             [ -n "$SUBDOMAIN_INPUT" ] && break
@@ -1220,7 +1054,6 @@ adicionar_dominio() {
         done
     fi
 
-    # 5. Verificar duplicatas
     ADDED=()
     SKIPPED=()
     for dom in "${NEW_DOMAINS_LIST[@]}"; do
@@ -1228,84 +1061,46 @@ adicionar_dominio() {
         for existing in "${EXISTING_DOMS[@]}"; do
             [ "$existing" = "$dom" ] && FOUND=true && break
         done
-        if $FOUND; then
-            SKIPPED+=("$dom")
-        else
-            ADDED+=("$dom")
-        fi
+        if $FOUND; then SKIPPED+=("$dom"); else ADDED+=("$dom"); fi
     done
 
-    if [ ${#SKIPPED[@]} -gt 0 ]; then
-        echo -e "\n  ${YELLOW}Já existentes (ignorados):${NC}"
-        for d in "${SKIPPED[@]}"; do warn "  $d"; done
-    fi
+    [ ${#SKIPPED[@]} -gt 0 ] && { echo -e "\n  ${YELLOW}Já existentes (ignorados):${NC}"; for d in "${SKIPPED[@]}"; do warn "  $d"; done; }
+    [ ${#ADDED[@]} -eq 0 ] && { warn "Nenhum domínio novo."; return; }
 
-    if [ ${#ADDED[@]} -eq 0 ]; then
-        warn "Nenhum domínio novo. Todos já estavam cadastrados."
-        return
-    fi
-
-    # 6. Montar lista COMPLETA (existentes + novos) para reescrever a rule
     ALL_FINAL=("${EXISTING_DOMS[@]}" "${ADDED[@]}")
 
     echo -e "\n  ${GREEN}Domínios que serão adicionados:${NC}"
     for d in "${ADDED[@]}"; do ok "  $d"; done
-    echo -e "\n  ${WHITE}Rule final completa:${NC}"
-    for d in "${ALL_FINAL[@]}"; do echo -e "    ${CYAN}→${NC} $d"; done
 
-    read -p "\n  Confirmar? (s/N): " CONF < /dev/tty
+    read -p "  Confirmar? (s/N): " CONF < /dev/tty
     [[ "$CONF" =~ ^[Ss]$ ]] || { warn "Cancelado."; return; }
 
     cp "$SERVERS_FILE" "${SERVERS_FILE}.bak"
 
-    # 7. Formatar rules completas (TCP e HTTP)
     RULE_TCP=""
     RULE_HTTP=""
     for dom in "${ALL_FINAL[@]}"; do
         [ -n "$RULE_TCP" ] && RULE_TCP="${RULE_TCP} || "
         [ -n "$RULE_HTTP" ] && RULE_HTTP="${RULE_HTTP} || "
-        
         RULE_TCP="${RULE_TCP}HostSNI(\`${dom}\`)"
         RULE_HTTP="${RULE_HTTP}Host(\`${dom}\`)"
     done
 
     python3 - "$SERVERS_FILE" "$SERVER_NAME" "$RULE_TCP" "$RULE_HTTP" << 'PYUPDATE'
 import sys, re
-
-filepath  = sys.argv[1]
-srv_name  = sys.argv[2]
-rule_tcp  = sys.argv[3]
-rule_http = sys.argv[4]
-
+filepath, srv_name, rule_tcp, rule_http = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
 with open(filepath, "r") as f:
     content = f.read()
-
-# Substituir rule TCP (linha unica com aspas duplas)
-content = re.sub(
-    rf'(    {re.escape(srv_name)}-https:\n      rule: )"[^"]*"',
-    lambda m: f'{m.group(1)}"{rule_tcp}"',
-    content
-)
-
-# Substituir rule HTTP
-content = re.sub(
-    rf'(    {re.escape(srv_name)}-http:\n      rule: )"[^"]*"',
-    lambda m: f'{m.group(1)}"{rule_http}"',
-    content
-)
-
+content = re.sub(rf'(    {re.escape(srv_name)}-https:\n      rule: )"[^"]*"', lambda m: f'{m.group(1)}"{rule_tcp}"', content)
+content = re.sub(rf'(    {re.escape(srv_name)}-http:\n      rule: )"[^"]*"', lambda m: f'{m.group(1)}"{rule_http}"', content)
 with open(filepath, "w") as f:
     f.write(content)
-
 print("  Arquivo atualizado com sucesso.")
 PYUPDATE
 
     ok "Domínios adicionados ao servidor '${SERVER_NAME}'!"
-    info "Backup: ${SERVERS_FILE}.bak"
     verificar_logs_recentes 6
 }
-
-
 
 # ============================================================================
 # REMOVER DOMÍNIO DE SERVIDOR EXISTENTE
@@ -1315,7 +1110,6 @@ remover_dominio() {
     local SERVERS_FILE="/root/traefik-central/dynamic-config/servers.yml"
 
     garantir_servers_yml
-
     selecionar_servidor "De qual servidor deseja remover um domínio?" || return
     SERVER_NAME="$SERVER_NAME_SEL"
 
@@ -1324,15 +1118,8 @@ remover_dominio() {
         | grep -oP "(?<=HostSNI\(\`)([^\`]+)(?=\`\))" || true
     )
 
-    if [ ${#DOM_ARRAY[@]} -eq 0 ]; then
-        erro "Nenhum domínio encontrado para '${SERVER_NAME}'."
-        return
-    fi
-
-    if [ ${#DOM_ARRAY[@]} -eq 1 ]; then
-        warn "Servidor possui apenas 1 domínio. Use 'Remover servidor' para remover."
-        return
-    fi
+    [ ${#DOM_ARRAY[@]} -eq 0 ] && { erro "Nenhum domínio encontrado."; return; }
+    [ ${#DOM_ARRAY[@]} -eq 1 ] && { warn "Só 1 domínio. Use 'Remover servidor' para remover."; return; }
 
     echo -e "\n  ${YELLOW}Domínios atuais:${NC}\n"
     local i=1
@@ -1356,10 +1143,8 @@ remover_dominio() {
     local NEW_SNI="" NEW_HOST=""
     for dom in "${DOM_ARRAY[@]}"; do
         [ "$dom" = "$DOM_REMOVER" ] && continue
-        
         [ -n "$NEW_SNI" ] && NEW_SNI="${NEW_SNI} || "
         [ -n "$NEW_HOST" ] && NEW_HOST="${NEW_HOST} || "
-        
         NEW_SNI="${NEW_SNI}HostSNI(\`${dom}\`)"
         NEW_HOST="${NEW_HOST}Host(\`${dom}\`)"
     done
@@ -1419,8 +1204,7 @@ listar_servidores() {
         while IFS= read -r router; do
             ADDR=$(awk "/^    ${router}-https-svc:/{found=1} found && /address:/{print; exit}" "$SERVERS_FILE" | grep -oP '"[^"]+"' | tr -d '"' || echo "?")
             RULE_LINE=$(awk "/^    ${router}-https:/{found=1} found && /rule:/{print; exit}" "$SERVERS_FILE" || echo "")
-            # Limpeza robusta para a listagem (remove regex e escapes modernos/legados)
-            DOMS=$(echo "$RULE_LINE" | sed -E 's/HostSNI(Regexp)?\(`//g; s/`\)//g; s/\{subdomain:\[a-zA-Z0-9-\]\+\}\\\./*\./g; s/\^.+\\.//g; s/\\\$//g; s/\\//g; s/ \|\| /, /g; s/rule: "//g; s/"$//g' | xargs || echo "?")
+            DOMS=$(echo "$RULE_LINE" | sed -E 's/HostSNI(Regexp)?\(`//g; s/`\)//g; s/ \|\| /, /g; s/rule: "//g; s/"$//g' | xargs || echo "?")
             echo -e "  ${GREEN}✔ ${router}${NC}"
             info "  Endereço: $ADDR"
             info "  Domínios: $DOMS"
@@ -1454,6 +1238,243 @@ menu_gerenciar_servidores() {
 }
 
 # ============================================================================
+# CORRIGIR TRAEFIK DO SERVIDOR LOCAL
+# ============================================================================
+corrigir_traefik_local() {
+    header "🔧 CORRIGIR TRAEFIK DESTE SERVIDOR"
+
+    echo -e "${CYAN}  Esta opção corrige o Traefik LOCAL deste servidor para funcionar${NC}"
+    echo -e "${CYAN}  corretamente atrás do Traefik Central.${NC}\n"
+    echo -e "${WHITE}  O que será feito:${NC}"
+    echo -e "  ${YELLOW}1.${NC} Localizar o traefik.yaml em /root/"
+    echo -e "  ${YELLOW}2.${NC} Fazer backup do arquivo original"
+    echo -e "  ${YELLOW}3.${NC} Trocar httpchallenge → tlschallenge"
+    echo -e "  ${YELLOW}4.${NC} Remover redirect global 80→443 do entrypoint"
+    echo -e "  ${YELLOW}5.${NC} Deletar acme.json antigo"
+    echo -e "  ${YELLOW}6.${NC} Redesployar o Traefik"
+    echo -e "  ${YELLOW}7.${NC} Verificar logs\n"
+
+    # ---- Localizar traefik.yaml ----
+    TRAEFIK_YAML=""
+    POSSIVEIS=(
+        "/root/traefik.yaml"
+        "/root/traefik/traefik.yaml"
+        "/root/docker/traefik.yaml"
+        "/opt/traefik/traefik.yaml"
+    )
+
+    step "Procurando traefik.yaml..."
+    for f in "${POSSIVEIS[@]}"; do
+        if [ -f "$f" ]; then
+            TRAEFIK_YAML="$f"
+            ok "Encontrado: $f"
+            break
+        fi
+    done
+
+    if [ -z "$TRAEFIK_YAML" ]; then
+        warn "Não encontrado nos caminhos padrão."
+        read -p "  Informe o caminho completo do traefik.yaml: " TRAEFIK_YAML < /dev/tty
+        if [ ! -f "$TRAEFIK_YAML" ]; then
+            erro "Arquivo não encontrado: $TRAEFIK_YAML"
+            return
+        fi
+    fi
+
+    # ---- Verificar se já usa tlschallenge ----
+    if grep -q "tlschallenge=true" "$TRAEFIK_YAML" 2>/dev/null; then
+        ok "Este Traefik já usa tlschallenge! Nenhuma correção necessária."
+        read -p "  Deseja forçar a renovação dos certificados mesmo assim? (s/N): " FORCE < /dev/tty
+        if [[ ! "$FORCE" =~ ^[Ss]$ ]]; then
+            return
+        fi
+    else
+        if ! grep -q "httpchallenge\|challenge" "$TRAEFIK_YAML" 2>/dev/null; then
+            warn "Nenhum challenge configurado encontrado no arquivo."
+            echo -e "\n  ${WHITE}Conteúdo relevante:${NC}"
+            grep -i "acme\|challenge\|certresolver" "$TRAEFIK_YAML" | head -10 | sed 's/^/  /'
+            read -p "  Continuar mesmo assim? (s/N): " CONT < /dev/tty
+            [[ "$CONT" =~ ^[Ss]$ ]] || return
+        fi
+    fi
+
+    # ---- Mostrar o que vai mudar ----
+    separador
+    echo -e "\n  ${YELLOW}Linhas que serão removidas/alteradas em: ${WHITE}$TRAEFIK_YAML${NC}\n"
+    echo -e "  ${RED}REMOVER:${NC}"
+    grep -n "httpchallenge\|redirections.entryPoint.to\|redirections.entryPoint.scheme\|redirections.entrypoint.permanent" \
+        "$TRAEFIK_YAML" 2>/dev/null | sed 's/^/    /' || echo "    (nenhuma linha encontrada)"
+    echo -e "\n  ${GREEN}ADICIONAR:${NC}"
+    echo -e "    - \"--certificatesresolvers.letsencryptresolver.acme.tlschallenge=true\""
+    separador
+
+    read -p "  Confirmar alterações? Digite 'sim': " CONF < /dev/tty
+    [ "$CONF" != "sim" ] && { warn "Cancelado."; return; }
+
+    # ---- Backup ----
+    step "Fazendo backup..."
+    BACKUP="${TRAEFIK_YAML}.bak.$(date +%Y%m%d_%H%M%S)"
+    cp "$TRAEFIK_YAML" "$BACKUP"
+    ok "Backup salvo em: $BACKUP"
+
+    # ---- Aplicar correções ----
+    step "Aplicando correções no traefik.yaml..."
+    python3 - "$TRAEFIK_YAML" << 'PYFIX'
+import sys, re
+
+filepath = sys.argv[1]
+
+with open(filepath, 'r') as f:
+    content = f.read()
+
+original = content
+
+# 1. Remover httpchallenge e sua linha de entrypoint
+content = re.sub(r'[ \t]*- "--certificatesresolvers\.[^"]*\.acme\.httpchallenge=true"\n', '', content)
+content = re.sub(r'[ \t]*- "--certificatesresolvers\.[^"]*\.acme\.httpchallenge\.entrypoint=[^"]*"\n', '', content)
+
+# 2. Remover redirect global do entrypoint (as 3 linhas)
+content = re.sub(r'[ \t]*- "--entrypoints\.web\.http\.redirections\.entryPoint\.to=[^"]*"\n', '', content)
+content = re.sub(r'[ \t]*- "--entrypoints\.web\.http\.redirections\.entryPoint\.scheme=[^"]*"\n', '', content)
+content = re.sub(r'[ \t]*- "--entrypoints\.web\.http\.redirections\.entrypoint\.permanent=[^"]*"\n', '', content)
+
+# 3. Adicionar tlschallenge antes da linha de storage
+storage_match = re.search(r'( +- "--certificatesresolvers\.([^.]+)\.acme\.storage=[^"]*")', content)
+if storage_match:
+    indent = re.match(r'( +)', storage_match.group(1)).group(1)
+    resolver_name = storage_match.group(2)
+    tls_line = f'{indent}- "--certificatesresolvers.{resolver_name}.acme.tlschallenge=true"\n'
+    insert_pos = storage_match.start()
+    content = content[:insert_pos] + tls_line + content[insert_pos:]
+
+# 4. Limpar linhas em branco duplicadas
+content = re.sub(r'\n{3,}', '\n\n', content)
+
+with open(filepath, 'w') as f:
+    f.write(content)
+
+if content != original:
+    print("CHANGED")
+else:
+    print("NOCHANGE")
+PYFIX
+
+    RET=$?
+    if [ $RET -ne 0 ]; then
+        erro "Erro ao aplicar correções. Restaurando backup..."
+        cp "$BACKUP" "$TRAEFIK_YAML"
+        return
+    fi
+
+    ok "traefik.yaml corrigido!"
+
+    echo -e "\n  ${CYAN}Diferenças aplicadas:${NC}"
+    diff "$BACKUP" "$TRAEFIK_YAML" | grep "^[<>]" | head -20 | \
+        sed 's/^< /  ❌ /; s/^> /  ✅ /' || true
+
+    # ---- Localizar e deletar acme.json ----
+    separador
+    step "Localizando acme.json..."
+
+    ACME_FILE=""
+    for VOL in volume_swarm_certificates traefik-certs vol_certificates; do
+        MP=$(docker volume inspect "$VOL" 2>/dev/null | grep -oP '"Mountpoint": "\K[^"]+' || echo "")
+        if [ -n "$MP" ] && [ -f "${MP}/acme.json" ]; then
+            ACME_FILE="${MP}/acme.json"
+            break
+        fi
+    done
+
+    # Busca adicional em todos os volumes docker
+    if [ -z "$ACME_FILE" ]; then
+        ACME_FILE=$(find /var/lib/docker/volumes -name "acme.json" 2>/dev/null | head -1 || echo "")
+    fi
+
+    if [ -n "$ACME_FILE" ] && [ -f "$ACME_FILE" ]; then
+        ACME_SIZE=$(du -sh "$ACME_FILE" | cut -f1)
+        warn "acme.json encontrado: $ACME_FILE (${ACME_SIZE})"
+        read -p "  Deletar acme.json para forçar renovação dos certificados? (s/N): " DEL_ACME < /dev/tty
+        if [[ "$DEL_ACME" =~ ^[Ss]$ ]]; then
+            cp "$ACME_FILE" "${ACME_FILE}.bak.$(date +%Y%m%d_%H%M%S)"
+            rm -f "$ACME_FILE"
+            ok "acme.json deletado (backup feito)!"
+        else
+            warn "acme.json mantido. Os certificados existentes serão reusados até expirar."
+        fi
+    else
+        warn "acme.json não encontrado. Será criado automaticamente ao subir o Traefik."
+    fi
+
+    # ---- Identificar nome da stack ----
+    separador
+    step "Identificando stack do Traefik..."
+
+    STACK_NAME=$(docker stack ls 2>/dev/null | grep -i traefik | grep -v "traefik-central" | awk '{print $1}' | head -1 || echo "")
+
+    if [ -z "$STACK_NAME" ]; then
+        warn "Stack do Traefik não identificada automaticamente."
+        docker stack ls 2>/dev/null || true
+        read -p "  Nome da stack do Traefik [traefik]: " STACK_NAME < /dev/tty
+        STACK_NAME="${STACK_NAME:-traefik}"
+    else
+        ok "Stack identificada: $STACK_NAME"
+    fi
+
+    # ---- Redesployar ----
+    separador
+    step "Redesployando stack '$STACK_NAME'..."
+    docker stack deploy -c "$TRAEFIK_YAML" "$STACK_NAME"
+    ok "Deploy iniciado!"
+
+    step "Aguardando inicialização (25s)..."
+    for i in $(seq 1 25); do
+        echo -ne "  ${CYAN}[$i/25]${NC}\r"
+        sleep 1
+    done
+    echo
+
+    # ---- Verificar serviço ----
+    step "Verificando serviço..."
+    SVC_NAME=$(docker service ls --format "{{.Name}}" 2>/dev/null | grep -i "traefik" | grep -v "central" | head -1 || echo "")
+
+    if [ -n "$SVC_NAME" ]; then
+        REPLICAS=$(docker service ls --filter "name=${SVC_NAME}" --format "{{.Replicas}}" 2>/dev/null || echo "?")
+        [[ "$REPLICAS" == "1/1" ]] && ok "Serviço $SVC_NAME: $REPLICAS ✔" || warn "Serviço $SVC_NAME: $REPLICAS (aguarde...)"
+
+        separador
+        echo -e "\n${CYAN}📄 LOGS DO TRAEFIK (últimas 30 linhas):${NC}"
+        separador
+        docker service logs --tail 30 "$SVC_NAME" 2>/dev/null || true
+        separador
+
+        echo -e "\n${CYAN}🔐 Verificando renovação de certificados:${NC}"
+        CERT_LOGS=$(docker service logs --tail 80 "$SVC_NAME" 2>/dev/null | grep -i "certificate\|acme\|tls\|obtain\|renew\|error\|ERR" || true)
+        if [ -n "$CERT_LOGS" ]; then
+            echo "$CERT_LOGS" | tail -15 | sed 's/^/  /'
+        else
+            warn "Nenhum log de certificado ainda. Aguarde alguns minutos."
+            info "Monitore com: docker service logs -f $SVC_NAME"
+        fi
+    else
+        warn "Serviço não identificado. Verifique com: docker service ls"
+    fi
+
+    # ---- Resumo ----
+    separador
+    echo -e "\n${GREEN}${BOLD}  ✅ CORREÇÃO CONCLUÍDA!${NC}\n"
+    echo -e "  ${WHITE}O que foi feito:${NC}"
+    ok "Backup: $BACKUP"
+    ok "httpchallenge → tlschallenge"
+    ok "Redirect global 80→443 removido do entrypoint"
+    [ -n "$ACME_FILE" ] && ok "acme.json deletado (renovação forçada)" || warn "acme.json não encontrado (será criado automaticamente)"
+    ok "Stack '$STACK_NAME' redesployada"
+    echo -e "\n  ${CYAN}Os certificados serão renovados automaticamente via TLS-ALPN-01.${NC}"
+    echo -e "  ${CYAN}Pode levar alguns minutos. Monitore com:${NC}"
+    [ -n "$SVC_NAME" ] && echo -e "  ${WHITE}docker service logs -f $SVC_NAME${NC}" || echo -e "  ${WHITE}docker service logs -f <nome_do_servico_traefik>${NC}"
+    separador
+}
+
+# ============================================================================
 # MENU PRINCIPAL
 # ============================================================================
 menu_principal() {
@@ -1470,6 +1491,7 @@ menu_principal() {
     echo -e "  ${CYAN}4)${NC} ${RED}Remover Traefik instalado${NC}"
     echo -e "  ${CYAN}5)${NC} ${GREEN}Gerenciar servidores/domínios${NC}"
     echo -e "  ${CYAN}6)${NC} ${WHITE}Listar servidores configurados${NC}"
+    echo -e "  ${CYAN}7)${NC} ${YELLOW}🔧 Corrigir Traefik deste servidor (para servidores destino)${NC}"
     echo -e "  ${CYAN}0)${NC} ${WHITE}Sair${NC}\n"
     separador
     read -p "Escolha: " OPCAO_MENU < /dev/tty
@@ -1506,6 +1528,7 @@ while true; do
         4) verificar_traefik_existente; menu_remocao; pausar ;;
         5) menu_gerenciar_servidores; pausar ;;
         6) listar_servidores; pausar ;;
+        7) corrigir_traefik_local; pausar ;;
         0) echo -e "\n${GREEN}Saindo. Até mais!${NC}\n"; exit 0 ;;
         *) erro "Opção inválida."; sleep 2 ;;
     esac
