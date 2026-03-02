@@ -769,9 +769,121 @@ adicionar_servidor() {
         "$SERVER_PORT" "$RULE"
 
     ok "Servidor '${SERVER_NAME}' adicionado com ${#ALL_DOMAINS[@]} domínio(s)!"
-    sleep 4
-    LOGS=$(docker service logs traefik-central_traefik-central --tail 10 2>/dev/null || true)
-    echo "$LOGS" | grep -q "ERR" && { erro "Erros:"; echo "$LOGS" | grep "ERR"; } || ok "Sem erros!"
+    sincronizar_certificados
+}
+
+# ============================================================================
+# SINCRONIZAR CERTIFICADOS (auto-refresh após mudanças)
+# ============================================================================
+sincronizar_certificados() {
+    local SERVERS_FILE="/root/traefik-central/dynamic-config/servers.yml"
+    local ACME_JSON="/etc/traefik/certificates/acme.json"
+    local CONTAINER=$(docker ps -q --filter "name=traefik-central" 2>/dev/null | head -1)
+
+    [ -z "$CONTAINER" ] && { warn "Container não encontrado."; return; }
+
+    step "Verificando certificados vs domínios..."
+
+    python3 - "$SERVERS_FILE" "$CONTAINER" << 'PYSYNC'
+import sys, subprocess, json, re
+
+servers_file = sys.argv[1]
+container = sys.argv[2]
+
+# Extrair domínios por router do servers.yml
+with open(servers_file) as f:
+    content = f.read()
+
+routers = {}
+for match in re.finditer(r'    (\S+):\n      rule: "([^"]+)"', content):
+    name = match.group(1)
+    if name.endswith('-svc') or name == 'insecure':
+        continue
+    domains = re.findall(r'Host\(`([^`]+)`\)', match.group(2))
+    if domains:
+        routers[name] = sorted(domains)
+
+if not routers:
+    print("  Nenhum router encontrado."); sys.exit(0)
+
+# Ler acme.json do container
+try:
+    result = subprocess.run(
+        ['docker', 'exec', container, 'cat', '/etc/traefik/certificates/acme.json'],
+        capture_output=True, text=True, timeout=10
+    )
+    acme = json.loads(result.stdout)
+    certs = acme.get('letsencrypt', {}).get('Certificates', [])
+except:
+    print("  ⚠ Não foi possível ler acme.json"); sys.exit(0)
+
+# Comparar domínios
+needs_refresh = []
+for router_name, router_doms in routers.items():
+    main_dom = router_doms[0]
+    found_cert = None
+    for c in certs:
+        if c.get('domain', {}).get('main') == main_dom:
+            found_cert = c
+            break
+        sans = c.get('domain', {}).get('sans', [])
+        if main_dom in sans:
+            found_cert = c
+            break
+
+    if not found_cert:
+        print(f"  ⚠ {router_name}: sem certificado → será gerado automaticamente")
+        continue
+
+    cert_doms = [found_cert['domain']['main']] + found_cert['domain'].get('sans', [])
+    cert_doms_set = set(cert_doms)
+    router_doms_set = set(router_doms)
+
+    if router_doms_set != cert_doms_set:
+        missing = router_doms_set - cert_doms_set
+        extra = cert_doms_set - router_doms_set
+        if missing:
+            print(f"  ⚠ {router_name}: {len(missing)} domínio(s) novo(s) sem cert: {', '.join(missing)}")
+        needs_refresh.append(found_cert['domain']['main'])
+    else:
+        print(f"  ✅ {router_name}: {len(router_doms)} domínio(s) — certificado OK")
+
+# Remover certs desatualizados para forçar re-emissão
+if needs_refresh:
+    acme['letsencrypt']['Certificates'] = [
+        c for c in certs if c['domain']['main'] not in needs_refresh
+    ]
+    # Escrever de volta
+    new_json = json.dumps(acme, indent=2)
+    subprocess.run(
+        ['docker', 'exec', '-i', container, 'sh', '-c',
+         f"cat > {'/etc/traefik/certificates/acme.json'}"],
+        input=new_json, text=True, timeout=10
+    )
+    print(f"\n  🔄 {len(needs_refresh)} certificado(s) removido(s) — Traefik vai re-emitir com todos os domínios")
+    print("  ⏳ Aguardando 15s para re-emissão...")
+else:
+    print("\n  ✅ Todos os certificados estão sincronizados!")
+PYSYNC
+
+    # Se houve mudança, forçar restart e aguardar
+    if docker exec "$CONTAINER" cat "$ACME_JSON" 2>/dev/null | python3 -c "
+import sys, json
+d=json.load(sys.stdin)
+c=d.get('letsencrypt',{}).get('Certificates',[])
+sys.exit(0 if len(c) == len(open('$SERVERS_FILE').read().split('certResolver')) - 1 else 1)
+" 2>/dev/null; then
+        : # OK
+    else
+        docker service update --force traefik-central_traefik-central >/dev/null 2>&1 &
+        sleep 15
+        # Verificar resultado
+        LOGS=$(docker service logs traefik-central_traefik-central --tail 10 2>/dev/null || true)
+        echo "$LOGS" | grep -q "Unable to obtain" && {
+            erro "Erro ao obter certificado. Verifique DNS dos domínios."
+            echo "$LOGS" | grep "Unable to obtain" | grep -oP "NXDOMAIN[^;]+" | head -3
+        } || ok "Certificados atualizados!"
+    fi
 }
 
 # ============================================================================
@@ -920,7 +1032,7 @@ c = open(f).read()
 c = re.sub(rf'(    {re.escape(s)}:\n      rule: )"[^"]*"', lambda m: f'{m.group(1)}"{r}"', c)
 open(f, 'w').write(c); print("OK")
 PY
-    ok "Domínios adicionados!"; verificar_logs_recentes 6
+    ok "Domínios adicionados!"; sincronizar_certificados
 }
 
 # ============================================================================
@@ -970,7 +1082,7 @@ c = open(f).read()
 c = re.sub(rf'(    {re.escape(s)}:\n      rule: )"[^"]*"', lambda m: f'{m.group(1)}"{nh}"', c)
 open(f, 'w').write(c); print("OK")
 PY
-    ok "'$DOM_R' removido!"; verificar_logs_recentes 6
+    ok "'$DOM_R' removido!"; sincronizar_certificados
 }
 
 # ============================================================================
