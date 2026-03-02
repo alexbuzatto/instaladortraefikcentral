@@ -369,7 +369,7 @@ coletar_configuracoes() {
 
     separador
     echo -e "\n${YELLOW}🖥️ SERVIDORES DESTINO${NC}"
-    echo -e "${WHITE}O Central gera os certificados SSL. Tráfego para destino via HTTP.${NC}\n"
+    echo -e "${WHITE}O Central gera certificados e conecta aos destinos via HTTPS.${NC}\n"
 
     ROUTERS_HTTPS_CONFIG=""
     SERVICES_HTTPS_CONFIG=""
@@ -390,8 +390,8 @@ coletar_configuracoes() {
             erro "IP inválido."
         done
 
-        read -p "  Porta HTTP do destino [80]: " SERVER_PORT < /dev/tty
-        SERVER_PORT="${SERVER_PORT:-80}"
+        read -p "  Porta HTTPS do destino [443]: " SERVER_PORT < /dev/tty
+        SERVER_PORT="${SERVER_PORT:-443}"
 
         ALL_DOMAINS=()
         while true; do
@@ -435,8 +435,9 @@ coletar_configuracoes() {
     ${SERVER_NAME}-svc:
       loadBalancer:
         passHostHeader: true
+        serversTransport: insecure@file
         servers:
-          - url: \"http://${SERVER_IP}:${SERVER_PORT}\"
+          - url: \"https://${SERVER_IP}:${SERVER_PORT}\"
 "
         DOMS_STR=$(printf '%s, ' "${ALL_DOMAINS[@]}" | sed 's/, $//')
         ok "Servidor '${SERVER_NAME}': ${#ALL_DOMAINS[@]} domínio(s) → ${SERVER_IP}:${SERVER_PORT}"
@@ -544,11 +545,14 @@ EOF
 # ROTEAMENTO - TRAEFIK CENTRAL (TLS TERMINATION)
 # ============================================================================
 # O Central gerencia todos os certificados Let's Encrypt.
-# Tráfego para destino vai via HTTP (sem SSL).
+# Tráfego para destino via HTTPS (insecureSkipVerify).
 # ⚠️ Use o menu opção 5 para gerenciar servidores.
 # ============================================================================
 
 http:
+  serversTransports:
+    insecure:
+      insecureSkipVerify: true
   routers:
 ${ROUTERS_HTTPS_CONFIG}
   services:
@@ -572,7 +576,7 @@ filepath, name, ip, port, rule = \
     sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5]
 
 router = f"\n    {name}:\n      rule: \"{rule}\"\n      entryPoints:\n        - websecure\n      service: {name}-svc\n      tls:\n        certResolver: letsencrypt\n"
-service = f"\n    {name}-svc:\n      loadBalancer:\n        passHostHeader: true\n        servers:\n          - url: \"http://{ip}:{port}\"\n"
+service = f"\n    {name}-svc:\n      loadBalancer:\n        passHostHeader: true\n        serversTransport: insecure@file\n        servers:\n          - url: \"https://{ip}:{port}\"\n"
 
 with open(filepath, "r") as f:
     content = f.read()
@@ -582,7 +586,7 @@ has_http = bool(re.search(r"^http:", content, re.MULTILINE))
 if not has_http:
     new_content = (
         "# ROTEAMENTO - TRAEFIK CENTRAL (TLS TERMINATION)\n\n"
-        "http:\n  routers:\n" + router + "\n  services:\n" + service + "\n"
+        "http:\n  serversTransports:\n    insecure:\n      insecureSkipVerify: true\n  routers:\n" + router + "\n  services:\n" + service + "\n"
     )
     with open(filepath, "w") as f:
         f.write(new_content)
@@ -711,7 +715,7 @@ adicionar_servidor() {
     read -p "  Testar conectividade? (S/n): " T < /dev/tty
     if [[ ! "$T" =~ ^[Nn]$ ]]; then
         ping -c 1 -W 2 "$SERVER_IP" &>/dev/null && ok "Ping OK" || {
-            timeout 2 bash -c "</dev/tcp/$SERVER_IP/80" 2>/dev/null && ok "Porta 80 OK" || {
+            timeout 2 bash -c "</dev/tcp/$SERVER_IP/443" 2>/dev/null && ok "Porta 443 OK" || {
                 erro "Sem resposta de $SERVER_IP"
                 read -p "Continuar? (s/N): " C < /dev/tty
                 [[ "$C" =~ ^[Ss]$ ]] || return
@@ -719,8 +723,8 @@ adicionar_servidor() {
         }
     fi
 
-    read -p "  Porta HTTP do destino [80]: " SERVER_PORT < /dev/tty
-    SERVER_PORT="${SERVER_PORT:-80}"
+    read -p "  Porta HTTPS do destino [443]: " SERVER_PORT < /dev/tty
+    SERVER_PORT="${SERVER_PORT:-443}"
 
     ALL_DOMAINS=()
     echo -e "\n  ${WHITE}O Central gera os certificados. Informe todos os domínios deste servidor.${NC}\n"
