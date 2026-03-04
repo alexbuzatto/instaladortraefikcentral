@@ -892,7 +892,8 @@ sys.exit(0 if len(c) == len(open('$SERVERS_FILE').read().split('certResolver')) 
 selecionar_servidor() {
     local SERVERS_FILE="/root/traefik-central/dynamic-config/servers.yml"
     ROUTERS=$(grep -E "^    [a-zA-Z0-9_-]+:$" "$SERVERS_FILE" 2>/dev/null | \
-        grep -v "\-svc:" | sed 's/://g' | sed 's/^[[:space:]]*//' | sed 's/[[:space:]]*$//' || true)
+        grep -v "\-svc:" | grep -v "^    insecure:" | \
+        sed 's/://g' | sed 's/^[[:space:]]*//' | sed 's/[[:space:]]*$//' || true)
     [ -z "$ROUTERS" ] && { warn "Nenhum servidor."; SERVER_NAME_SEL=""; return 1; }
 
     mapfile -t SRV_ARRAY <<< "$ROUTERS"
@@ -1110,7 +1111,8 @@ listar_servidores() {
     garantir_servers_yml
 
     mapfile -t SRV_NAMES < <(grep -E "^    [a-zA-Z0-9_-]+:$" "$SERVERS_FILE" 2>/dev/null | \
-        grep -v "\-svc:" | sed 's/://g' | sed 's/^[[:space:]]*//' | sed 's/[[:space:]]*$//' || true)
+        grep -v "\-svc:" | grep -v "^    insecure:" | \
+        sed 's/://g' | sed 's/^[[:space:]]*//' | sed 's/[[:space:]]*$//' || true)
 
     if [ ${#SRV_NAMES[@]} -gt 0 ]; then
         for r in "${SRV_NAMES[@]}"; do
