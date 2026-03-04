@@ -152,7 +152,7 @@ except: pass
     echo -e "\n${WHITE}${BOLD}  RESUMO:${NC}"
     ok "Válidos: $OK"
     [ "$EXPIRANDO" -gt 0 ] && warn "Expirando em breve: $EXPIRANDO — verifique renovação automática"
-    [ "$PADRAO" -gt 0 ]    && warn "Certificado padrão: $PADRAO — rode opção 7 no servidor destino"
+    [ "$PADRAO" -gt 0 ]    && warn "Certificado padrão: $PADRAO — acesse o domínio no browser para Let's Encrypt gerar o certificado"
     [ "$ERRO" -gt 0 ]      && erro "Sem resposta/expirados: $ERRO"
     separador
 }
