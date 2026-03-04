@@ -695,6 +695,7 @@ garantir_servers_yml() {
 # ============================================================================
 adicionar_servidor() {
     header "➕ ADICIONAR SERVIDOR"
+    criar_script_auxiliar
     local SERVERS_FILE="/root/traefik-central/dynamic-config/servers.yml"
     garantir_servers_yml
 
@@ -1091,6 +1092,7 @@ PY
 # ============================================================================
 remover_servidor() {
     header "➖ REMOVER SERVIDOR"
+    criar_script_auxiliar
     local SERVERS_FILE="/root/traefik-central/dynamic-config/servers.yml"
     garantir_servers_yml
     selecionar_servidor "Remover qual?" || return
