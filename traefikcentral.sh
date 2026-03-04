@@ -591,7 +591,7 @@ if not has_http:
     with open(filepath, "w") as f:
         f.write(new_content)
 else:
-    content = re.sub(r"(http:\n  routers:)(.*?)(  services:)", lambda m: f"{m.group(1)}{m.group(2)}{router}{m.group(3)}", content, count=1, flags=re.DOTALL)
+    content = re.sub(r"(  routers:)(.*?)(  services:)", lambda m: f"{m.group(1)}{m.group(2)}{router}{m.group(3)}", content, count=1, flags=re.DOTALL)
     content = content.rstrip() + "\n" + service
     with open(filepath, "w") as f:
         f.write(content)
