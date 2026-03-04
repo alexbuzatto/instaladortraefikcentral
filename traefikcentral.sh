@@ -1,4 +1,4 @@
-﻿#!/bin/bash
+#!/bin/bash
 
 # ============================================================================
 # 🚀 INSTALADOR DO TRAEFIK CENTRAL — TLS TERMINATION
@@ -74,7 +74,7 @@ verificar_certificados() {
         step "Coletando domínios do servers.yml..."
         while IFS= read -r dom; do
             DOMINIOS_LIST+=("$dom")
-        done < <(grep -oP "(?<=HostSNI\(\`)([^\`]+)(?=\`\))" "$SERVERS_FILE" 2>/dev/null || true)
+        done < <(grep -oP "(?<=Host\(\`)([^\`]+)(?=\`\))" "$SERVERS_FILE" 2>/dev/null || true)
     fi
 
     # Coletar do acme.json local (servidor destino)
