@@ -36,6 +36,19 @@ separador() { echo -e "${BLUE}--------------------------------------------------
 pausar()    { echo -e "\n${YELLOW}Pressione ENTER para continuar...${NC}"; read -r < /dev/tty; }
 
 # ============================================================================
+# LIMPAR BACKUPS ANTIGOS (mantém só os últimos N)
+# ============================================================================
+limpar_backups() {
+    local MAX=${1:-5}
+    local BAK_DIR="/root/traefik-central/dynamic-config"
+    local BAKS=($(ls -1t "$BAK_DIR/servers.yml.bak."* "$BAK_DIR/servers.yml.bak.diag."* 2>/dev/null))
+    local COUNT=${#BAKS[@]}
+    [ "$COUNT" -le "$MAX" ] && return
+    local REMOVE=$((COUNT - MAX))
+    for bak in "${BAKS[@]:$MAX}"; do rm -f "$bak"; done
+}
+
+# ============================================================================
 # ROOT
 # ============================================================================
 verificar_root() {
@@ -766,6 +779,7 @@ adicionar_servidor() {
     [[ "$CONF" =~ ^[Ss]$ ]] || { warn "Cancelado."; return; }
 
     cp "$SERVERS_FILE" "${SERVERS_FILE}.bak.$(date +%Y%m%d_%H%M%S)"
+    limpar_backups
     python3 /tmp/traefik_add.py "$SERVERS_FILE" "$SERVER_NAME" "$SERVER_IP" \
         "$SERVER_PORT" "$RULE"
 
@@ -1027,6 +1041,7 @@ for b in sorted(bases): print(b)
     done
 
     cp "$SERVERS_FILE" "${SERVERS_FILE}.bak.$(date +%Y%m%d_%H%M%S)"
+    limpar_backups
     python3 - "$SERVERS_FILE" "$SERVER_NAME" "$RULE" << 'PY'
 import sys, re
 f, s, r = sys.argv[1], sys.argv[2], sys.argv[3]
@@ -1077,6 +1092,7 @@ remover_dominio() {
     done
 
     cp "$SERVERS_FILE" "${SERVERS_FILE}.bak.$(date +%Y%m%d_%H%M%S)"
+    limpar_backups
     python3 - "$SERVERS_FILE" "$SERVER_NAME" "$NEW_HOST" << 'PY'
 import sys, re
 f, s, nh = sys.argv[1], sys.argv[2], sys.argv[3]
@@ -1100,6 +1116,7 @@ remover_servidor() {
     read -p "  Digite 'sim': " C < /dev/tty
     [ "$C" != "sim" ] && { warn "Cancelado."; return; }
     cp "$SERVERS_FILE" "${SERVERS_FILE}.bak.$(date +%Y%m%d_%H%M%S)"
+    limpar_backups
     python3 /tmp/traefik_remove.py "$SERVERS_FILE" "$SERVER_NAME"
     ok "'$SERVER_NAME' removido!"; verificar_logs_recentes 6
 }
@@ -1156,6 +1173,150 @@ menu_gerenciar_servidores() {
 }
 
 # ============================================================================
+# DIAGNÓSTICO E CORREÇÃO AUTOMÁTICA (opção 8)
+# ============================================================================
+diagnosticar_e_corrigir() {
+    header "🔧 DIAGNÓSTICO E CORREÇÃO AUTOMÁTICA"
+    local SERVERS_FILE="/root/traefik-central/dynamic-config/servers.yml"
+    [ ! -f "$SERVERS_FILE" ] && { warn "servers.yml não encontrado."; return; }
+
+    step "1️⃣  Verificando DNS de todos os domínios..."
+    echo
+
+    # Fase 1: Diagnóstico DNS via Python
+    PY_OUT=$(python3 << 'PYCHECK'
+import os, re, socket, json
+
+servers_file = "/root/traefik-central/dynamic-config/servers.yml"
+
+with open(servers_file) as f:
+    content = f.read()
+
+routers = {}
+for match in re.finditer(r'    (\S+):\n      rule: "([^\"]+)"', content):
+    name = match.group(1)
+    if name.endswith('-svc') or name in ('insecure',):
+        continue
+    domains = re.findall(r'Host\(`([^`]+)`\)', match.group(2))
+    if domains:
+        routers[name] = sorted(set(domains))
+
+if not routers:
+    print("ERRO:Nenhum router encontrado.")
+    exit(1)
+
+results = []
+all_ok = True
+for rname in sorted(routers.keys()):
+    for dom in routers[rname]:
+        try:
+            socket.getaddrinfo(dom, 80, socket.AF_INET)
+            results.append(f"OK:{rname}:{dom}")
+        except socket.gaierror:
+            results.append(f"NOK:{rname}:{dom}")
+            all_ok = False
+
+if all_ok:
+    print("ALL_OK")
+else:
+    for r in results:
+        print(r)
+    # Lista de remoções (última seção para o bash parsear)
+    print("---PROBLEMAS---")
+    for rname in sorted(routers.keys()):
+        bad = [d for d in routers[rname] if any(
+            r.startswith(f"NOK:{rname}:{d}") for r in results
+        )]
+        if bad:
+            remaining = [d for d in routers[rname] if d not in bad]
+            if remaining:
+                new_rule = " || ".join(f"Host(`{d}`)" for d in remaining)
+                print(f"FIX:{rname}:{new_rule}")
+                for d in bad:
+                    print(f"REM:{rname}:{d}")
+            else:
+                print(f"SKIP:{rname}:router ficaria vazio")
+PYCHECK
+)
+    PY_EXIT=$?
+
+    if [ "$PY_EXIT" -ne 0 ]; then
+        erro "Erro no diagnóstico: $(echo \"$PY_OUT\" | head -1)"
+        return
+    fi
+
+    if echo "$PY_OUT" | grep -q "^ALL_OK"; then
+        ok "Todos os domínios têm DNS válido! Nada a corrigir."
+        step "2️⃣  Verificando certificados expirados no acme.json..."
+        # Também verificar certs expirados
+        sincronizar_certificados
+        return
+    fi
+
+    # Mostrar problemas encontrados
+    echo -e "\n  ${YELLOW}Domínios com problema de DNS (NXDOMAIN):${NC}\n"
+    PROBLEMAS=()
+    while IFS= read -r line; do
+        [[ "$line" == ---* ]] && break
+        if [[ "$line" == NOK:* ]]; then
+            ROUTER=$(echo "$line" | cut -d: -f2)
+            DOM=$(echo "$line" | cut -d: -f3)
+            echo -e "  ${RED}✖${NC} ${WHITE}${DOM}${NC} → ${YELLOW}sem DNS (NXDOMAIN)${NC} ${CYAN}[router: ${ROUTER}]${NC}"
+            PROBLEMAS+=("$DOM")
+        fi
+    done <<< "$PY_OUT"
+
+    echo -e "\n  ${#PROBLEMAS[@]} domínio(s) com DNS inválido encontrado(s)."
+    echo -e "  ${WHITE}O Let's Encrypt NÃO consegue emitir certificados para domínios sem DNS,${NC}"
+    echo -e "  ${WHITE}e isso BLOQUEIA a renovação de TODOS os domínios do mesmo router.${NC}"
+
+    echo
+    read -p "  🔧 Remover automaticamente os domínios sem DNS? (s/N): " CONFIRM < /dev/tty
+    [[ ! "$CONFIRM" =~ ^[Ss]$ ]] && { warn "Cancelado."; return; }
+
+    # Fase 2: Aplicar correções
+    step "2️⃣  Aplicando correções..."
+    local BACKUP_FILE="${SERVERS_FILE}.bak.diag.$(date +%Y%m%d_%H%M%S)"
+    cp "$SERVERS_FILE" "$BACKUP_FILE"
+    ok "Backup: $BACKUP_FILE"
+    limpar_backups
+
+    # Aplicar remoções
+    while IFS= read -r line; do
+        [[ "$line" == ---* ]] && break
+        if [[ "$line" == FIX:* ]]; then
+            ROUTER=$(echo "$line" | cut -d: -f2)
+            NEW_RULE=$(echo "$line" | cut -d: -f3-)
+            ok "Router '$ROUTER': atualizando regra..."
+            python3 - "$SERVERS_FILE" "$ROUTER" "$NEW_RULE" << 'PYFIX'
+import sys, re
+f, r, nr = sys.argv[1], sys.argv[2], sys.argv[3]
+c = open(f).read()
+c = re.sub(rf'(    {re.escape(r)}:\n      rule: )"[^"]*"', lambda m: f'{m.group(1)}"{nr}"', c)
+open(f, 'w').write(c)
+print("OK")
+PYFIX
+        fi
+    done <<< "$PY_OUT"
+
+    # Mostrar o que foi removido
+    echo
+    while IFS= read -r line; do
+        [[ "$line" == REM:* ]] && {
+            DOM=$(echo "$line" | cut -d: -f3)
+            warn "  ✗ $DOM removido"
+        }
+    done <<< "$PY_OUT"
+
+    echo
+    step "3️⃣  Sincronizando certificados..."
+    sincronizar_certificados
+
+    echo -e "\n${GREEN}✅ Diagnóstico e correção concluídos!${NC}"
+    info "Execute a opção 7 novamente para verificar o status dos certificados."
+}
+
+# ============================================================================
 # MENU PRINCIPAL
 # ============================================================================
 menu_principal() {
@@ -1173,6 +1334,7 @@ menu_principal() {
     echo -e "  ${CYAN}5)${NC} ${GREEN}Gerenciar servidores/domínios${NC}"
     echo -e "  ${CYAN}6)${NC} ${WHITE}Listar servidores configurados${NC}"
     echo -e "  ${CYAN}7)${NC} ${CYAN}🔐 Verificar status dos certificados SSL${NC}"
+    echo -e "  ${CYAN}8)${NC} ${GREEN}🔧 Diagnosticar e corrigir certificados${NC}"
     echo -e "  ${CYAN}0)${NC} ${WHITE}Sair${NC}\n"
     separador
     read -p "Escolha: " OPCAO_MENU < /dev/tty
@@ -1214,6 +1376,7 @@ while true; do
         5) criar_script_auxiliar; menu_gerenciar_servidores; pausar ;;
         6) listar_servidores; pausar ;;
         7) verificar_certificados; pausar ;;
+        8) diagnosticar_e_corrigir; pausar ;;
         0) echo -e "\n${GREEN}Até mais!${NC}\n"; exit 0 ;;
         *) erro "Inválido."; sleep 2 ;;
     esac
