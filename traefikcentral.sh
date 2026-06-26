@@ -1335,6 +1335,7 @@ menu_principal() {
     echo -e "  ${CYAN}6)${NC} ${WHITE}Listar servidores configurados${NC}"
     echo -e "  ${CYAN}7)${NC} ${CYAN}🔐 Verificar status dos certificados SSL${NC}"
     echo -e "  ${CYAN}8)${NC} ${GREEN}🔧 Diagnosticar e corrigir certificados${NC}"
+    echo -e "  ${CYAN}9)${NC} ${YELLOW}🧹 Limpar backups antigos (manter 5)${NC}"
     echo -e "  ${CYAN}0)${NC} ${WHITE}Sair${NC}\n"
     separador
     read -p "Escolha: " OPCAO_MENU < /dev/tty
@@ -1377,6 +1378,7 @@ while true; do
         6) listar_servidores; pausar ;;
         7) verificar_certificados; pausar ;;
         8) diagnosticar_e_corrigir; pausar ;;
+        9) limpar_backups; pausar ;;
         0) echo -e "\n${GREEN}Até mais!${NC}\n"; exit 0 ;;
         *) erro "Inválido."; sleep 2 ;;
     esac
