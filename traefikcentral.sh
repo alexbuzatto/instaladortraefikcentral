@@ -74,6 +74,308 @@ verificar_logs_recentes() {
 }
 
 # ============================================================================
+# GO2RTC / WEBRTC
+# ============================================================================
+coletar_detalhes_go2rtc() {
+    GO2RTC_ENABLED=1
+    GO2RTC_PUBLIC_PORT="${GO2RTC_PUBLIC_PORT:-8555}"
+    GO2RTC_TARGET_PORT="${GO2RTC_TARGET_PORT:-8555}"
+    GO2RTC_IP="${GO2RTC_IP:-}"
+    CURRENT_GO2RTC_PUBLIC_PORT="${CURRENT_GO2RTC_PUBLIC_PORT:-}"
+
+    while true; do
+        read -p "  IP do go2rtc (ex: 192.168.25.200): " GO2RTC_IP < /dev/tty
+        [[ "$GO2RTC_IP" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] && break
+        erro "IP inválido."
+    done
+
+    while true; do
+        read -p "  Porta publicada no Central [${GO2RTC_PUBLIC_PORT}]: " GO2RTC_PUBLIC_PORT < /dev/tty
+        GO2RTC_PUBLIC_PORT="${GO2RTC_PUBLIC_PORT:-8555}"
+        [[ "$GO2RTC_PUBLIC_PORT" =~ ^[0-9]+$ ]] && [ "$GO2RTC_PUBLIC_PORT" -ge 1 ] && [ "$GO2RTC_PUBLIC_PORT" -le 65535 ] || { erro "Porta inválida."; continue; }
+        [[ "$GO2RTC_PUBLIC_PORT" != "80" && "$GO2RTC_PUBLIC_PORT" != "443" && "$GO2RTC_PUBLIC_PORT" != "8080" ]] || { erro "Essa porta é reservada pelo Traefik Central."; continue; }
+        break
+    done
+
+    if [ -n "$CURRENT_GO2RTC_PUBLIC_PORT" ] && [ "$GO2RTC_PUBLIC_PORT" = "$CURRENT_GO2RTC_PUBLIC_PORT" ]; then
+        :
+    elif ss -tln 2>/dev/null | grep -q ":${GO2RTC_PUBLIC_PORT} " || ss -uln 2>/dev/null | grep -q ":${GO2RTC_PUBLIC_PORT} "; then
+        erro "A porta ${GO2RTC_PUBLIC_PORT} já está em uso neste servidor. Escolha outra."
+        return 1
+    fi
+
+    while true; do
+        read -p "  Porta do go2rtc no destino [${GO2RTC_TARGET_PORT}]: " GO2RTC_TARGET_PORT < /dev/tty
+        GO2RTC_TARGET_PORT="${GO2RTC_TARGET_PORT:-8555}"
+        [[ "$GO2RTC_TARGET_PORT" =~ ^[0-9]+$ ]] && [ "$GO2RTC_TARGET_PORT" -ge 1 ] && [ "$GO2RTC_TARGET_PORT" -le 65535 ] && break
+        erro "Porta inválida."
+    done
+
+    ok "go2rtc/WebRTC: ${GO2RTC_PUBLIC_PORT}/TCP+UDP → ${GO2RTC_IP}:${GO2RTC_TARGET_PORT}"
+}
+
+escrever_go2rtc_yml() {
+    local BASE_DIR="${1:-/root/traefik-central}"
+    cat > "$BASE_DIR/dynamic-config/go2rtc.yml" <<EOF
+# ============================================================================
+# GO2RTC / WEBRTC
+# ============================================================================
+# Porta publicada no Central: ${GO2RTC_PUBLIC_PORT}/TCP+UDP
+# Destino configurado: ${GO2RTC_IP}:${GO2RTC_TARGET_PORT}
+# ============================================================================
+
+tcp:
+  routers:
+    go2rtc-tcp:
+      entryPoints: [go2rtc-tcp]
+      rule: "HostSNI(\`*\`)"
+      service: go2rtc-tcp
+  services:
+    go2rtc-tcp:
+      loadBalancer:
+        servers:
+          - address: "${GO2RTC_IP}:${GO2RTC_TARGET_PORT}"
+
+udp:
+  routers:
+    go2rtc-udp:
+      entryPoints: [go2rtc-udp]
+      service: go2rtc-udp
+  services:
+    go2rtc-udp:
+      loadBalancer:
+        servers:
+          - address: "${GO2RTC_IP}:${GO2RTC_TARGET_PORT}"
+EOF
+}
+
+atualizar_compose_go2rtc() {
+    local COMPOSE_FILE="$1"
+    local OLD_PUBLIC_PORT="${2:-}"
+    local ENABLED="${3:-0}"
+    local NEW_PUBLIC_PORT="${4:-8555}"
+
+    python3 - "$COMPOSE_FILE" "$OLD_PUBLIC_PORT" "$ENABLED" "$NEW_PUBLIC_PORT" << 'PYGO2RTC'
+import re
+import sys
+
+compose_file, old_port, enabled, new_port = sys.argv[1:5]
+
+with open(compose_file, "r", encoding="utf-8") as f:
+    content = f.read()
+
+content = re.sub(
+    r"\n\s*# BEGIN GO2RTC ENTRYPOINTS.*?# END GO2RTC ENTRYPOINTS\s*",
+    "\n",
+    content,
+    flags=re.DOTALL,
+)
+content = re.sub(
+    r"\n\s*# BEGIN GO2RTC PORTS.*?# END GO2RTC PORTS\s*",
+    "\n",
+    content,
+    flags=re.DOTALL,
+)
+content = re.sub(
+    r'^\s*-\s*"--entrypoints\.go2rtc-(tcp|udp)\.address=.*"\n',
+    "",
+    content,
+    flags=re.MULTILINE,
+)
+
+if old_port.isdigit():
+    for proto in ("tcp", "udp"):
+        pattern = (
+            rf'^\s*-\s*target:\s*{re.escape(old_port)}\n'
+            rf'\s*published:\s*{re.escape(old_port)}\n'
+            rf'\s*protocol:\s*{proto}\n'
+            rf'\s*mode:\s*host\n'
+        )
+        content = re.sub(pattern, "", content, flags=re.MULTILINE)
+
+if enabled == "1":
+    entry_anchor = '      - "--entrypoints.dashboard.address=:8080"\n'
+    if entry_anchor not in content:
+        raise SystemExit("Anchor de entrypoint não encontrado no docker-compose.yml")
+    entry_block = (
+        "      # BEGIN GO2RTC ENTRYPOINTS\n"
+        f'      - "--entrypoints.go2rtc-tcp.address=:{new_port}/tcp"\n'
+        f'      - "--entrypoints.go2rtc-udp.address=:{new_port}/udp"\n'
+        "      # END GO2RTC ENTRYPOINTS\n"
+    )
+    content = content.replace(entry_anchor, entry_anchor + entry_block, 1)
+
+    port_anchor = (
+        "      - target: 8080\n"
+        "        published: 8080\n"
+        "        mode: host\n"
+    )
+    if port_anchor not in content:
+        raise SystemExit("Anchor de porta não encontrado no docker-compose.yml")
+    port_block = (
+        "      # BEGIN GO2RTC PORTS\n"
+        f"      - target: {new_port}\n"
+        f"        published: {new_port}\n"
+        "        protocol: tcp\n"
+        "        mode: host\n"
+        f"      - target: {new_port}\n"
+        f"        published: {new_port}\n"
+        "        protocol: udp\n"
+        "        mode: host\n"
+        "      # END GO2RTC PORTS\n"
+    )
+    content = content.replace(port_anchor, port_anchor + port_block, 1)
+
+content = re.sub(r"\n{3,}", "\n\n", content)
+
+with open(compose_file, "w", encoding="utf-8") as f:
+    f.write(content)
+PYGO2RTC
+}
+
+restaurar_backup_go2rtc() {
+    local GO2RTC_FILE="$1"
+    local GO2RTC_BACKUP="$2"
+
+    if [ -n "$GO2RTC_BACKUP" ] && [ -f "$GO2RTC_BACKUP" ]; then
+        cp "$GO2RTC_BACKUP" "$GO2RTC_FILE"
+    else
+        rm -f "$GO2RTC_FILE"
+    fi
+}
+
+aplicar_stack_com_rollback() {
+    local COMPOSE_FILE="$1"
+    local COMPOSE_BACKUP="$2"
+    local GO2RTC_FILE="$3"
+    local GO2RTC_BACKUP="$4"
+    local ACTION_LABEL="$5"
+
+    step "Aplicando stack..."
+    if ! docker stack deploy -c "$COMPOSE_FILE" traefik-central; then
+        warn "Falha no deploy. Restaurando backup..."
+        cp "$COMPOSE_BACKUP" "$COMPOSE_FILE"
+        restaurar_backup_go2rtc "$GO2RTC_FILE" "$GO2RTC_BACKUP"
+        docker stack deploy -c "$COMPOSE_FILE" traefik-central >/dev/null 2>&1 || true
+        erro "Não foi possível ${ACTION_LABEL}. Backup restaurado."
+        return 1
+    fi
+
+    for i in $(seq 1 20); do
+        REPLICAS=$(docker service ls --filter "name=traefik-central_traefik-central" --format "{{.Replicas}}" 2>/dev/null | head -1)
+        [ "$REPLICAS" = "1/1" ] && return 0
+        sleep 1
+    done
+
+    warn "A stack não estabilizou após a atualização. Restaurando backup..."
+    cp "$COMPOSE_BACKUP" "$COMPOSE_FILE"
+    restaurar_backup_go2rtc "$GO2RTC_FILE" "$GO2RTC_BACKUP"
+    docker stack deploy -c "$COMPOSE_FILE" traefik-central >/dev/null 2>&1 || true
+    erro "Não foi possível ${ACTION_LABEL}. Backup restaurado."
+    return 1
+}
+
+configurar_go2rtc_existente() {
+    header "🎥 CONFIGURAR GO2RTC / WEBRTC"
+    local BASE_DIR="/root/traefik-central"
+    local COMPOSE_FILE="$BASE_DIR/docker-compose.yml"
+    local GO2RTC_FILE="$BASE_DIR/dynamic-config/go2rtc.yml"
+    local OLD_PUBLIC_PORT="8555"
+
+    [ ! -f "$COMPOSE_FILE" ] && { erro "docker-compose.yml não encontrado em $BASE_DIR"; return; }
+
+    if [ -f "$GO2RTC_FILE" ]; then
+        OLD_PUBLIC_PORT=$(grep -oP '(?<=Porta publicada no Central: )\d+' "$GO2RTC_FILE" 2>/dev/null | head -1 || echo "8555")
+        info "Configuração atual detectada:"
+        info "  Porta pública: ${OLD_PUBLIC_PORT}/TCP+UDP"
+        info "  Destino: $(grep -oP '(?<=address: ")[^"]+' "$GO2RTC_FILE" 2>/dev/null | head -1 || echo "?")"
+        echo
+    fi
+
+    GO2RTC_ENABLED=1
+    CURRENT_GO2RTC_PUBLIC_PORT="$OLD_PUBLIC_PORT"
+    GO2RTC_PUBLIC_PORT="$OLD_PUBLIC_PORT"
+    GO2RTC_TARGET_PORT=$(grep -oP '(?<=address: "[0-9.]+:)\d+' "$GO2RTC_FILE" 2>/dev/null | head -1 || echo "8555")
+    GO2RTC_IP=$(grep -oP '(?<=address: ")[0-9.]+' "$GO2RTC_FILE" 2>/dev/null | head -1 || echo "")
+
+    coletar_detalhes_go2rtc || return
+
+    local COMPOSE_BACKUP="${COMPOSE_FILE}.bak.$(date +%Y%m%d_%H%M%S)"
+    local GO2RTC_BACKUP=""
+    cp "$COMPOSE_FILE" "$COMPOSE_BACKUP"
+    [ -f "$GO2RTC_FILE" ] && { GO2RTC_BACKUP="${GO2RTC_FILE}.bak.$(date +%Y%m%d_%H%M%S)"; cp "$GO2RTC_FILE" "$GO2RTC_BACKUP"; }
+    limpar_backups
+
+    atualizar_compose_go2rtc "$COMPOSE_FILE" "$OLD_PUBLIC_PORT" "1" "$GO2RTC_PUBLIC_PORT"
+    escrever_go2rtc_yml "$BASE_DIR"
+    ok "go2rtc.yml"
+
+    aplicar_stack_com_rollback "$COMPOSE_FILE" "$COMPOSE_BACKUP" "$GO2RTC_FILE" "$GO2RTC_BACKUP" "aplicar a configuração do go2rtc" || return
+
+    ss -tlnp | grep -q ":${GO2RTC_PUBLIC_PORT} " && ok "Porta ${GO2RTC_PUBLIC_PORT}/TCP: ok" || warn "Porta ${GO2RTC_PUBLIC_PORT}/TCP: aguarde"
+    ss -ulnp | grep -q ":${GO2RTC_PUBLIC_PORT} " && ok "Porta ${GO2RTC_PUBLIC_PORT}/UDP: ok" || warn "Porta ${GO2RTC_PUBLIC_PORT}/UDP: aguarde"
+    verificar_logs_recentes 15
+}
+
+remover_go2rtc_existente() {
+    header "🗑️ REMOVER GO2RTC / WEBRTC"
+    local BASE_DIR="/root/traefik-central"
+    local COMPOSE_FILE="$BASE_DIR/docker-compose.yml"
+    local GO2RTC_FILE="$BASE_DIR/dynamic-config/go2rtc.yml"
+    local OLD_PUBLIC_PORT
+
+    [ ! -f "$COMPOSE_FILE" ] && { erro "docker-compose.yml não encontrado em $BASE_DIR"; return; }
+    [ ! -f "$GO2RTC_FILE" ] && { warn "go2rtc.yml não encontrado."; return; }
+
+    OLD_PUBLIC_PORT=$(grep -oP '(?<=Porta publicada no Central: )\d+' "$GO2RTC_FILE" 2>/dev/null | head -1 || echo "8555")
+    info "Configuração atual: porta ${OLD_PUBLIC_PORT}/TCP+UDP"
+    read -p "  Remover configuração do go2rtc? (s/N): " CONF < /dev/tty
+    [[ "$CONF" =~ ^[Ss]$ ]] || { warn "Cancelado."; return; }
+
+    local COMPOSE_BACKUP="${COMPOSE_FILE}.bak.$(date +%Y%m%d_%H%M%S)"
+    local GO2RTC_BACKUP="${GO2RTC_FILE}.bak.$(date +%Y%m%d_%H%M%S)"
+    cp "$COMPOSE_FILE" "$COMPOSE_BACKUP"
+    cp "$GO2RTC_FILE" "$GO2RTC_BACKUP"
+    limpar_backups
+
+    atualizar_compose_go2rtc "$COMPOSE_FILE" "$OLD_PUBLIC_PORT" "0" "$OLD_PUBLIC_PORT"
+    rm -f "$GO2RTC_FILE"
+
+    aplicar_stack_com_rollback "$COMPOSE_FILE" "$COMPOSE_BACKUP" "$GO2RTC_FILE" "$GO2RTC_BACKUP" "remover a configuração do go2rtc" || return
+    ok "Configuração do go2rtc removida."
+    verificar_logs_recentes 15
+}
+
+gerenciar_go2rtc() {
+    header "🎥 GERENCIAR GO2RTC / WEBRTC"
+    local GO2RTC_FILE="/root/traefik-central/dynamic-config/go2rtc.yml"
+
+    if [ -f "$GO2RTC_FILE" ]; then
+        info "go2rtc já configurado neste Central."
+        echo -e "  ${CYAN}1)${NC} Atualizar configuração"
+        echo -e "  ${CYAN}2)${NC} Remover configuração"
+        echo -e "  ${CYAN}0)${NC} Voltar\n"
+        read -p "Escolha: " OP_GO2RTC < /dev/tty
+        case "$OP_GO2RTC" in
+            1) configurar_go2rtc_existente ;;
+            2) remover_go2rtc_existente ;;
+            0) return ;;
+            *) erro "Inválido." ;;
+        esac
+    else
+        info "go2rtc ainda não está configurado neste Central."
+        echo -e "  ${CYAN}1)${NC} Configurar agora"
+        echo -e "  ${CYAN}0)${NC} Voltar\n"
+        read -p "Escolha: " OP_GO2RTC < /dev/tty
+        case "$OP_GO2RTC" in
+            1) configurar_go2rtc_existente ;;
+            0) return ;;
+            *) erro "Inválido." ;;
+        esac
+    fi
+}
+
+# ============================================================================
 # VERIFICAR STATUS DE CERTIFICADOS (opção 8)
 # ============================================================================
 verificar_certificados() {
@@ -459,6 +761,20 @@ coletar_configuracoes() {
         read -p "  Outro servidor? (s/N): " CONTINUE < /dev/tty
         [[ "$CONTINUE" =~ ^[Ss]$ ]] || break
     done
+
+    separador
+    echo -e "\n${YELLOW}🎥 GO2RTC / WEBRTC${NC}"
+    echo -e "${WHITE}Opcional: publica a porta dedicada 8555 em TCP+UDP no Central.${NC}\n"
+
+    GO2RTC_ENABLED=0
+    GO2RTC_PUBLIC_PORT=8555
+    GO2RTC_TARGET_PORT=8555
+    GO2RTC_IP=""
+
+    read -p "  Configurar go2rtc/WebRTC? (s/N): " ENABLE_GO2RTC < /dev/tty
+    if [[ "$ENABLE_GO2RTC" =~ ^[Ss]$ ]]; then
+        coletar_detalhes_go2rtc || true
+    fi
 }
 
 # ============================================================================
@@ -469,6 +785,31 @@ criar_arquivos() {
 
     BASE_DIR="/root/traefik-central"
     mkdir -p "$BASE_DIR/dynamic-config"
+
+    local GO2RTC_ENTRYPOINTS=""
+    local GO2RTC_PORTS=""
+    if [ "${GO2RTC_ENABLED:-0}" = "1" ]; then
+        GO2RTC_ENTRYPOINTS=$(cat <<EOF
+      # BEGIN GO2RTC ENTRYPOINTS
+      - "--entrypoints.go2rtc-tcp.address=:${GO2RTC_PUBLIC_PORT}/tcp"
+      - "--entrypoints.go2rtc-udp.address=:${GO2RTC_PUBLIC_PORT}/udp"
+      # END GO2RTC ENTRYPOINTS
+EOF
+)
+        GO2RTC_PORTS=$(cat <<EOF
+      # BEGIN GO2RTC PORTS
+      - target: ${GO2RTC_PUBLIC_PORT}
+        published: ${GO2RTC_PUBLIC_PORT}
+        protocol: tcp
+        mode: host
+      - target: ${GO2RTC_PUBLIC_PORT}
+        published: ${GO2RTC_PUBLIC_PORT}
+        protocol: udp
+        mode: host
+      # END GO2RTC PORTS
+EOF
+)
+    fi
 
     cat > "$BASE_DIR/docker-compose.yml" <<EOF
 version: "3.8"
@@ -483,6 +824,7 @@ services:
       - "--entrypoints.web.http.redirections.entryPoint.scheme=https"
       - "--entrypoints.websecure.address=:443"
       - "--entrypoints.dashboard.address=:8080"
+${GO2RTC_ENTRYPOINTS}
       - "--providers.swarm=true"
       - "--providers.swarm.endpoint=unix:///var/run/docker.sock"
       - "--providers.swarm.exposedbydefault=false"
@@ -510,6 +852,7 @@ services:
       - target: 8080
         published: 8080
         mode: host
+${GO2RTC_PORTS}
     deploy:
       mode: replicated
       replicas: 1
@@ -575,6 +918,14 @@ EOF
         echo "# Use o menu opção 5 para adicionar servidores." > "$BASE_DIR/dynamic-config/servers.yml"
     fi
     ok "servers.yml"
+
+    if [ "${GO2RTC_ENABLED:-0}" = "1" ]; then
+        escrever_go2rtc_yml "$BASE_DIR"
+        ok "go2rtc.yml"
+    else
+        rm -f "$BASE_DIR/dynamic-config/go2rtc.yml"
+    fi
+
     info "Arquivos em: $BASE_DIR"
 }
 
@@ -670,6 +1021,10 @@ verificar_pos_instalacao() {
     for PORT in 80 443 8080; do
         ss -tlnp | grep -q ":${PORT} " && ok "Porta $PORT: ok" || warn "Porta $PORT: aguarde"
     done
+    if [ "${GO2RTC_ENABLED:-0}" = "1" ]; then
+        ss -tlnp | grep -q ":${GO2RTC_PUBLIC_PORT} " && ok "Porta ${GO2RTC_PUBLIC_PORT}/TCP: ok" || warn "Porta ${GO2RTC_PUBLIC_PORT}/TCP: aguarde"
+        ss -ulnp | grep -q ":${GO2RTC_PUBLIC_PORT} " && ok "Porta ${GO2RTC_PUBLIC_PORT}/UDP: ok" || warn "Porta ${GO2RTC_PUBLIC_PORT}/UDP: aguarde"
+    fi
 }
 
 # ============================================================================
@@ -685,6 +1040,9 @@ resumo_final() {
     echo -e "\n  ${GREEN}✅ Certificados Let's Encrypt gerenciados pelo Central${NC}"
     echo -e "  ${WHITE}Os servidores destino NÃO precisam de nenhuma configuração SSL.${NC}"
     echo -e "  ${WHITE}Use a opção 7 para verificar o status dos certificados.${NC}"
+    if [ "${GO2RTC_ENABLED:-0}" = "1" ]; then
+        echo -e "  ${WHITE}go2rtc/WebRTC:${NC} porta ${GO2RTC_PUBLIC_PORT}/TCP+UDP → ${GO2RTC_IP}:${GO2RTC_TARGET_PORT}"
+    fi
     separador
     echo -e "\n${BLUE}================================================================${NC}"
     echo -e "${GREEN}${BOLD}  ✅ PRONTO!${NC}"
@@ -1160,6 +1518,7 @@ menu_gerenciar_servidores() {
     echo -e "  ${CYAN}2)${NC} Adicionar domínio"
     echo -e "  ${CYAN}3)${NC} Remover domínio"
     echo -e "  ${CYAN}4)${NC} Remover servidor completo"
+    echo -e "  ${CYAN}5)${NC} Configurar go2rtc / WebRTC"
     echo -e "  ${CYAN}0)${NC} Voltar\n"
     read -p "Escolha: " OPCAO_SERV < /dev/tty
     case "$OPCAO_SERV" in
@@ -1167,6 +1526,7 @@ menu_gerenciar_servidores() {
         2) adicionar_dominio ;;
         3) remover_dominio ;;
         4) criar_script_auxiliar; remover_servidor ;;
+        5) gerenciar_go2rtc ;;
         0) return ;;
         *) erro "Inválido." ;;
     esac

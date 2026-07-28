@@ -13,6 +13,7 @@ INTERNET ──→ MIKROTIK ──→ :80  → redirect HTTPS                  �
                     │           ├── HTTPS → Servidor A (:443)     │
                     │           ├── HTTPS → Servidor B (:443)     │
                     │           └── HTTPS → Servidor N (:443)     │
+                    │    :8555 → go2rtc/WebRTC (porta padrão)      │
                     │    :8080 → Dashboard (BasicAuth)            │
                     └─────────────────────────────────────────────┘
 ```
@@ -33,6 +34,7 @@ INTERNET ──→ MIKROTIK ──→ :80  → redirect HTTPS                  �
 |-------|--------|
 | **80** | Redirect automático HTTP → HTTPS |
 | **443** | TLS Termination + proxy HTTPS para destinos |
+| **8555** | Porta padrão do go2rtc/WebRTC via TCP+UDP dedicado |
 | **8080** | Dashboard Traefik com autenticação BasicAuth |
 
 > **Os servidores destino NÃO precisam de alterações.** O Central gerencia todos os certificados.
@@ -48,6 +50,7 @@ curl -sSL https://raw.githubusercontent.com/alexbuzatto/instaladortraefikcentral
 - Linux (Ubuntu/Debian recomendado)
 - Acesso root
 - Portas 80, 443 e 8080 livres
+- Porta dedicada livre se for usar `go2rtc`/WebRTC (`8555` por padrão)
 - Docker e Docker Swarm (instalados automaticamente se ausentes)
 - **DNS** de todos os domínios apontando para o IP público do Central
 
@@ -59,7 +62,7 @@ curl -sSL https://raw.githubusercontent.com/alexbuzatto/instaladortraefikcentral
 | **2** | Diagnóstico do sistema | RAM, disco, portas, Docker, Swarm |
 | **3** | Verificar Traefik(s) instalados | Lista stacks e serviços Traefik |
 | **4** | Remover Traefik instalado | Remove stack, volumes e configs |
-| **5** | Gerenciar servidores/domínios | Adicionar/remover servidores e domínios |
+| **5** | Gerenciar servidores/domínios | Adicionar/remover servidores e configurar `go2rtc` |
 | **6** | Listar servidores configurados | Mostra IPs, domínios e status dos certs |
 | **7** | 🔐 Verificar certificados SSL | Status de cada certificado via openssl |
 
@@ -71,6 +74,7 @@ curl -sSL https://raw.githubusercontent.com/alexbuzatto/instaladortraefikcentral
    - Email para Let's Encrypt
    - Usuário e senha do painel
    - Servidores destino com IPs e domínios
+   - `go2rtc`/WebRTC opcional com porta dedicada TCP+UDP
 3. **Deploy** — cria docker-compose, dynamic configs e faz `docker stack deploy`
 4. **Verificação** — testa se o serviço subiu e gera resumo
 
@@ -82,6 +86,7 @@ curl -sSL https://raw.githubusercontent.com/alexbuzatto/instaladortraefikcentral
 | **Adicionar domínio** | Adiciona subdomínios a servidor existente |
 | **Remover domínio** | Remove subdomínio específico |
 | **Remover servidor** | Remove servidor completo e todas as rotas |
+| **Configurar go2rtc / WebRTC** | Habilita, atualiza ou remove a porta dedicada em instalação já existente |
 
 ### Exemplo de adição
 
@@ -120,6 +125,7 @@ Após **cada alteração** (adicionar/remover servidor ou domínio), o script au
 ├── docker-compose.yml              # Stack do Traefik Central
 └── dynamic-config/
     ├── dashboard.yml                # Roteador do painel (porta 8080)
+    ├── go2rtc.yml                   # Roteamento TCP/UDP dedicado (opcional)
     ├── middlewares.yml               # BasicAuth + Redirect /dashboard/
     └── servers.yml                   # Roteadores HTTPS com certResolver
 ```
@@ -148,6 +154,51 @@ http:
         servers:
           - url: "https://192.168.25.100:443"
 ```
+
+### Estrutura do `go2rtc.yml`
+
+O arquivo só é gerado quando a opção `go2rtc/WebRTC` for habilitada durante a instalação.
+
+```yaml
+tcp:
+  routers:
+    go2rtc-tcp:
+      entryPoints: [go2rtc-tcp]
+      rule: "HostSNI(`*`)"
+      service: go2rtc-tcp
+  services:
+    go2rtc-tcp:
+      loadBalancer:
+        servers:
+          - address: "192.168.25.200:8555"
+
+udp:
+  routers:
+    go2rtc-udp:
+      entryPoints: [go2rtc-udp]
+      service: go2rtc-udp
+  services:
+    go2rtc-udp:
+      loadBalancer:
+        servers:
+          - address: "192.168.25.200:8555"
+```
+
+### Quando usar `go2rtc`
+
+- Use quando precisar encaminhar `WebRTC` pelo Central sem depender de `Host()`.
+- O Traefik publica uma porta dedicada e repassa tudo que chegar nela para o `go2rtc`.
+- A porta padrão é `8555`, mas pode ser alterada no instalador.
+- Essa configuração fica isolada em `go2rtc.yml` e não altera o comportamento dos serviços HTTP/HTTPS já existentes.
+
+### Habilitar em um Central já instalado
+
+Se o Traefik Central já estiver rodando, não é necessário reinstalar tudo:
+
+1. Abra o script e escolha a **opção 5**
+2. Entre em **Configurar go2rtc / WebRTC**
+3. Informe o **IP do go2rtc**, a **porta pública no Central** e a **porta do destino**
+4. O script atualiza o `docker-compose.yml`, gera o `go2rtc.yml` e executa novo `docker stack deploy`
 
 ## Verificar Certificados (Opção 7)
 
@@ -181,6 +232,10 @@ O Central conecta aos destinos via **HTTPS** com `insecureSkipVerify`. Se o dest
 ### Dashboard não acessível
 
 O dashboard usa a porta **8080**. Verifique se o Mikrotik/firewall redireciona essa porta para o Central.
+
+### go2rtc/WebRTC não conecta
+
+Verifique se a porta dedicada configurada no instalador está liberada no firewall/Mikrotik e se o `go2rtc.yml` aponta para o IP e a porta corretos do destino.
 
 ## Comandos Úteis
 
