@@ -1736,10 +1736,42 @@ menu_principal() {
     echo -e "  ${CYAN}7)${NC} ${CYAN}🔐 Verificar status dos certificados SSL${NC}"
     echo -e "  ${CYAN}8)${NC} ${GREEN}🔧 Diagnosticar e corrigir certificados${NC}"
     echo -e "  ${CYAN}9)${NC} ${YELLOW}🧹 Limpar backups antigos (manter 5)${NC}"
+    echo -e "  ${CYAN}10)${NC} ${CYAN}⚡ Aplicar fila de certificados (1 cert por domínio)${NC}"
     echo -e "  ${CYAN}0)${NC} ${WHITE}Sair${NC}\n"
     separador
     read -p "Escolha: " OPCAO_MENU < /dev/tty
     echo
+}
+
+# ============================================================================
+# APLICAR FILA DE CERTIFICADOS (1 cert por domínio)
+# ============================================================================
+aplicar_fila_certificados() {
+    header "⚡ APLICAR FILA DE CERTIFICADOS (1 cert por domínio)"
+    local SERVERS_FILE="/root/traefik-central/dynamic-config/servers.yml"
+    garantir_servers_yml
+    criar_script_auxiliar
+
+    step "Backup do servers.yml..."
+    cp "$SERVERS_FILE" "${SERVERS_FILE}.bak.fila.$(date +%Y%m%d_%H%M%S)"
+    limpar_backups
+
+    step "Regenerando tls.domains de todos os routers..."
+    if python3 /tmp/traefik_sync_domains.py "$SERVERS_FILE"; then
+        ok "tls.domains aplicado. Cada domínio passa a ter certificado próprio (fila)."
+    else
+        erro "Falha ao regenerar tls.domains."
+        return
+    fi
+
+    read -p "  Reiniciar o Traefik agora p/ aplicar? (S/n): " R < /dev/tty
+    if [[ ! "$R" =~ ^[Nn]$ ]]; then
+        step "Reiniciando Traefik..."
+        docker service update --force traefik-central_traefik-central
+        ok "Reiniciado. Verifique os novos certificados na opção 7."
+    else
+        info "Aplicado. Reinicie depois com: docker service update --force traefik-central_traefik-central"
+    fi
 }
 
 # ============================================================================
@@ -1779,6 +1811,7 @@ while true; do
         7) verificar_certificados; pausar ;;
         8) diagnosticar_e_corrigir; pausar ;;
         9) limpar_backups; pausar ;;
+        10) aplicar_fila_certificados; pausar ;;
         0) echo -e "\n${GREEN}Até mais!${NC}\n"; exit 0 ;;
         *) erro "Inválido."; sleep 2 ;;
     esac
