@@ -987,6 +987,41 @@ with open(filepath, "w") as f:
     f.write(content)
 print(f"Servidor '{name}' removido.")
 PYREMOVE
+
+    # Regenera tls.domains (1 cert por dominio) de todos os routers com
+    # certResolver: letsencrypt, usando os dominios da propria rule.
+    # Isso da a "fila" de emissoes independentes (um dominio problematico
+    # nao bloqueia os demais, ex.: atras de Cloudflare).
+    cat > /tmp/traefik_sync_domains.py << 'PYDOMAINS'
+import sys, re
+f = sys.argv[1]
+c = open(f).read()
+block_re = re.compile(
+    r"^    ([a-zA-Z0-9_-]+):\n(.*?)(?=^    [a-zA-Z0-9_-]+:|^  services:|\Z)",
+    re.MULTILINE | re.DOTALL,
+)
+def fix(m):
+    name, block = m.group(1), m.group(2)
+    if "      rule:" not in block or "certResolver: letsencrypt" not in block:
+        return m.group(0)
+    mrule = re.search(r'      rule: "([^"]*)"', block)
+    if not mrule:
+        return m.group(0)
+    doms = re.findall(r"Host\(`([^`]+)`\)", mrule.group(1))
+    if not doms:
+        return m.group(0)
+    new_domains = "        domains:\n" + "".join(f"          - main: {d}\n" for d in doms)
+    marker = "        certResolver: letsencrypt\n"
+    idx = block.find(marker)
+    if idx < 0:
+        return m.group(0)
+    prefix = block[: idx + len(marker)]
+    return f"    {name}:\n" + prefix + new_domains
+out = block_re.sub(fix, c)
+out = re.sub(r"(\n  services:)", r"\n\1", out, count=1)
+open(f, "w").write(out)
+print("tls.domains atualizado")
+PYDOMAINS
 }
 
 # ============================================================================
@@ -1139,9 +1174,10 @@ adicionar_servidor() {
     cp "$SERVERS_FILE" "${SERVERS_FILE}.bak.$(date +%Y%m%d_%H%M%S)"
     limpar_backups
     python3 /tmp/traefik_add.py "$SERVERS_FILE" "$SERVER_NAME" "$SERVER_IP" \
-        "$SERVER_PORT" "$RULE"
+            "$SERVER_PORT" "$RULE"
+        python3 /tmp/traefik_sync_domains.py "$SERVERS_FILE"
 
-    ok "Servidor '${SERVER_NAME}' adicionado com ${#ALL_DOMAINS[@]} domínio(s)!"
+        ok "Servidor '${SERVER_NAME}' adicionado com ${#ALL_DOMAINS[@]} domínio(s)!"
     sincronizar_certificados
 }
 
@@ -1298,6 +1334,7 @@ adicionar_dominio() {
     header "🌐 ADICIONAR DOMÍNIO"
     local SERVERS_FILE="/root/traefik-central/dynamic-config/servers.yml"
     garantir_servers_yml
+    criar_script_auxiliar
     selecionar_servidor "Qual servidor?" || return
     SERVER_NAME="$SERVER_NAME_SEL"
 
@@ -1407,6 +1444,7 @@ c = open(f).read()
 c = re.sub(rf'(    {re.escape(s)}:\n      rule: )"[^"]*"', lambda m: f'{m.group(1)}"{r}"', c)
 open(f, 'w').write(c); print("OK")
 PY
+    python3 /tmp/traefik_sync_domains.py "$SERVERS_FILE"
     ok "Domínios adicionados!"; sincronizar_certificados
 }
 
@@ -1417,6 +1455,7 @@ remover_dominio() {
     header "🗑️ REMOVER DOMÍNIO"
     local SERVERS_FILE="/root/traefik-central/dynamic-config/servers.yml"
     garantir_servers_yml
+    criar_script_auxiliar
     selecionar_servidor "Servidor?" || return
     SERVER_NAME="$SERVER_NAME_SEL"
 
@@ -1458,6 +1497,7 @@ c = open(f).read()
 c = re.sub(rf'(    {re.escape(s)}:\n      rule: )"[^"]*"', lambda m: f'{m.group(1)}"{nh}"', c)
 open(f, 'w').write(c); print("OK")
 PY
+    python3 /tmp/traefik_sync_domains.py "$SERVERS_FILE"
     ok "'$DOM_R' removido!"; sincronizar_certificados
 }
 
