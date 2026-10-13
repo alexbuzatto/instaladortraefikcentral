@@ -3,6 +3,8 @@
 # ============================================================================
 # 🚀 INSTALADOR DO TRAEFIK CENTRAL — TLS TERMINATION
 # ============================================================================
+# Versão: 1.2.0
+# Data: 2026-10-13
 # Estratégia: HTTPS Reverse Proxy com TLS Termination no Central
 #
 # Fluxo:
@@ -1183,13 +1185,13 @@ adicionar_servidor() {
 
     read -p "  Testar conectividade? (S/n): " T < /dev/tty
     if [[ ! "$T" =~ ^[Nn]$ ]]; then
-        ping -c 1 -W 2 "$SERVER_IP" &>/dev/null && ok "Ping OK" || {
-            timeout 2 bash -c "</dev/tcp/$SERVER_IP/443" 2>/dev/null && ok "Porta 443 OK" || {
-                erro "Sem resposta de $SERVER_IP"
-                read -p "Continuar? (s/N): " C < /dev/tty
-                [[ "$C" =~ ^[Ss]$ ]] || return
-            }
-        }
+        if ! timeout 3 bash -c "</dev/tcp/$SERVER_IP/$SERVER_PORT" 2>/dev/null; then
+            erro "Sem resposta de $SERVER_IP:$SERVER_PORT"
+            read -p "Continuar? (s/N): " C < /dev/tty
+            [[ "$C" =~ ^[Ss]$ ]] || return
+        else
+            ok "Porta $SERVER_PORT: OK"
+        fi
     fi
 
     read -p "  Porta HTTPS do destino [443]: " SERVER_PORT < /dev/tty
@@ -1197,6 +1199,9 @@ adicionar_servidor() {
 
     ALL_DOMAINS=()
     echo -e "\n  ${WHITE}O Central gera os certificados. Informe todos os domínios deste servidor.${NC}\n"
+
+    # Validação de DNS para todos os domínios antes de adicionar
+    step "Verificando DNS dos domínios..."
 
     while true; do
         while true; do
@@ -1218,6 +1223,24 @@ adicionar_servidor() {
         read -p "  Mais domínios base? (s/N): " M < /dev/tty
         [[ "$M" =~ ^[Ss]$ ]] || break
     done
+
+    # Verificar DNS de todos os domínios antes de prosseguir
+    INVALID_DOMAINS=()
+    for dom in "${ALL_DOMAINS[@]}"; do
+        if ! timeout 5 bash -c "echo > /dev/tcp/8.8.8.8/53 && dig +short @8.8.8.8 $dom A" &>/dev/null; then
+            INVALID_DOMAINS+=("$dom")
+        fi
+    done
+
+    if [ ${#INVALID_DOMAINS[@]} -gt 0 ]; then
+        erro "Os seguintes domínios não têm DNS válido:"
+        for dom in "${INVALID_DOMAINS[@]}"; do
+            erro "  ✖ $dom"
+        done
+        erro "Corrija o DNS antes de adicionar o servidor."
+        return
+    fi
+    ok "Todos os domínios têm DNS válido."
 
     RULE=""
     for dom in "${ALL_DOMAINS[@]}"; do
@@ -1252,6 +1275,13 @@ sincronizar_certificados() {
     local CONTAINER=$(docker ps -q --filter "name=traefik-central" 2>/dev/null | head -1)
 
     [ -z "$CONTAINER" ] && { warn "Container não encontrado."; return; }
+
+    # Backup do acme.json antes de sincronizar
+    step "Fazendo backup do acme.json..."
+    local ACME_BACKUP_DIR="/root/traefik-central/backups"
+    local ACME_BACKUP="$ACME_BACKUP_DIR/acme.json.bak.$(date +%Y%m%d_%H%M%S)"
+    mkdir -p "$ACME_BACKUP_DIR"
+    docker exec "$CONTAINER" sh -c "cat /etc/traefik/certificates/acme.json" > "$ACME_BACKUP" 2>/dev/null && ok "Backup: $ACME_BACKUP" || warn "Não foi possível fazer backup do acme.json"
 
     step "Verificando certificados vs domínios..."
 
@@ -1799,6 +1829,7 @@ menu_principal() {
     echo -e "  ${CYAN}8)${NC} ${GREEN}🔧 Diagnosticar e corrigir certificados${NC}"
     echo -e "  ${CYAN}9)${NC} ${YELLOW}🧹 Limpar backups antigos (manter 5)${NC}"
     echo -e "  ${CYAN}10)${NC} ${CYAN}⚡ Aplicar fila de certificados (1 cert por domínio)${NC}"
+    echo -e "  ${CYAN}11)${NC} ${RED}🔍 Listar domínios com DNS inválido${NC}"
     echo -e "  ${CYAN}0)${NC} ${WHITE}Sair${NC}\n"
     separador
     read -p "Escolha: " OPCAO_MENU < /dev/tty
@@ -1806,9 +1837,36 @@ menu_principal() {
 }
 
 # ============================================================================
-# APLICAR FILA DE CERTIFICADOS (1 cert por domínio)
+# LISTAR DOMÍNIOS COM DNS INVÁLIDO (opção 11)
 # ============================================================================
-aplicar_fila_certificados() {
+listar_dominios_sem_dns() {
+    header "🔍 LISTAR DOMÍNIOS COM DNS INVÁLIDO"
+    local SERVERS_FILE="/root/traefik-central/dynamic-config/servers.yml"
+    [ ! -f "$SERVERS_FILE" ] && { warn "servers.yml não encontrado."; return; }
+
+    step "Verificando DNS de todos os domínios..."
+    echo
+
+    # Extrair domínios e routers
+    local HAS_INVALID=0
+    while IFS= read -r line; do
+        if [[ "$line" =~ Host\(\`([^\`]+)\`\) ]]; then
+            DOM="${BASH_REMATCH[1]}"
+            if ! timeout 5 bash -c "echo > /dev/tcp/8.8.8.8/53 && dig +short @8.8.8.8 $DOM A" &>/dev/null; then
+                erro "$DOM → sem DNS (NXDOMAIN)"
+                HAS_INVALID=1
+            else
+                ok "$DOM → DNS OK"
+            fi
+        fi
+    done < "$SERVERS_FILE"
+
+    if [ "$HAS_INVALID" -eq 0 ]; then
+        ok "Todos os domínios têm DNS válido!"
+    else
+        info "Use a opção 8 para corrigir automaticamente."
+    fi
+}
     header "⚡ APLICAR FILA DE CERTIFICADOS (1 cert por domínio)"
     local SERVERS_FILE="/root/traefik-central/dynamic-config/servers.yml"
     garantir_servers_yml
@@ -1878,6 +1936,7 @@ while true; do
         8) diagnosticar_e_corrigir; pausar ;;
         9) limpar_backups; pausar ;;
         10) aplicar_fila_certificados; pausar ;;
+        11) listar_dominios_sem_dns; pausar ;;
         0) echo -e "\n${GREEN}Até mais!${NC}\n"; exit 0 ;;
         *) erro "Inválido."; sleep 2 ;;
     esac
