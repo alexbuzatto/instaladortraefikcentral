@@ -1867,6 +1867,11 @@ listar_dominios_sem_dns() {
         info "Use a opção 8 para corrigir automaticamente."
     fi
 }
+
+# ============================================================================
+# APLICAR FILA DE CERTIFICADOS (1 cert por domínio)
+# ============================================================================
+aplicar_fila_certificados() {
     header "⚡ APLICAR FILA DE CERTIFICADOS (1 cert por domínio)"
     local SERVERS_FILE="/root/traefik-central/dynamic-config/servers.yml"
     garantir_servers_yml
