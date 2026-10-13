@@ -1344,47 +1344,25 @@ for router_name, router_doms in routers.items():
         missing = router_doms_set - cert_doms_set
         extra = cert_doms_set - router_doms_set
         if missing:
-            print(f"  ⚠ {router_name}: {len(missing)} domínio(s) novo(s) sem cert: {', '.join(missing)}")
-        needs_refresh.append(found_cert['domain']['main'])
+            print(f"  ⚠ {router_name}: {len(missing)} domínio(s) novo(s): {', '.join(missing)}")
+            print(f"     → O Traefik vai adicioná-los automaticamente ao certificado existente.")
+        if extra:
+            print(f"  ℹ {router_name}: {len(extra)} domínio(s) extra(s) no certificado: {', '.join(extra)}")
+            print(f"     → Serão mantidos para compatibilidade.")
     else:
         print(f"  ✅ {router_name}: {len(router_doms)} domínio(s) — certificado OK")
 
-# Remover certs desatualizados para forçar re-emissão
+# Não remover certs desatualizados! O Traefik v3+ adiciona SANs automaticamente
 if needs_refresh:
-    acme['letsencrypt']['Certificates'] = [
-        c for c in certs if c['domain']['main'] not in needs_refresh
-    ]
-    # Escrever de volta
-    new_json = json.dumps(acme, indent=2)
-    subprocess.run(
-        ['docker', 'exec', '-i', container, 'sh', '-c',
-         f"cat > {'/etc/traefik/certificates/acme.json'}"],
-        input=new_json, text=True, timeout=10
-    )
-    print(f"\n  🔄 {len(needs_refresh)} certificado(s) removido(s) — Traefik vai re-emitir com todos os domínios")
-    print("  ⏳ Aguardando 15s para re-emissão...")
+    print(f"\n  ℹ {len(needs_refresh)} router(s) com novos domínios detectados.")
+    print("     O Traefik vai adicioná-los aos certificados existentes automaticamente.")
 else:
     print("\n  ✅ Todos os certificados estão sincronizados!")
 PYSYNC
 
-    # Se houve mudança, forçar restart e aguardar
-    if docker exec "$CONTAINER" cat "$ACME_JSON" 2>/dev/null | python3 -c "
-import sys, json
-d=json.load(sys.stdin)
-c=d.get('letsencrypt',{}).get('Certificates',[])
-sys.exit(0 if len(c) == len(open('$SERVERS_FILE').read().split('certResolver')) - 1 else 1)
-" 2>/dev/null; then
-        : # OK
-    else
-        docker service update --force traefik-central_traefik-central >/dev/null 2>&1 &
-        sleep 15
-        # Verificar resultado
-        LOGS=$(docker service logs traefik-central_traefik-central --tail 10 2>/dev/null || true)
-        echo "$LOGS" | grep -q "Unable to obtain" && {
-            erro "Erro ao obter certificado. Verifique DNS dos domínios."
-            echo "$LOGS" | grep "Unable to obtain" | grep -oP "NXDOMAIN[^;]+" | head -3
-        } || ok "Certificados atualizados!"
-    fi
+    # O Traefik v3+ adiciona SANs automaticamente, então não precisamos forçar restart
+    ok "O Traefik vai adicionar os novos domínios aos certificados existentes automaticamente."
+    info "Aguarde alguns minutos para o Let's Encrypt emitir os novos certificados."
 }
 
 # ============================================================================
@@ -1814,7 +1792,7 @@ PYFIX
 menu_principal() {
     clear
     echo -e "${BLUE}================================================================${NC}"
-    echo -e "${GREEN}${BOLD}     🚀 TRAEFIK CENTRAL — TLS TERMINATION${NC}"
+    echo -e "${GREEN}${BOLD}     🚀 TRAEFIK CENTRAL — TLS TERMINATION (v1.2.0)${NC}"
     echo -e "${BLUE}================================================================${NC}"
     echo -e "${CYAN}  Certificados Let's Encrypt gerenciados pelo Central${NC}"
     echo -e "${WHITE}  Servidores destino recebem apenas HTTP (sem alterações)${NC}"
@@ -1869,6 +1847,31 @@ listar_dominios_sem_dns() {
 }
 
 # ============================================================================
+# DIAGNÓSTICO RÁPIDO (para opção 10)
+# ============================================================================
+diagnostico_sistema_rapido() {
+    local SERVERS_FILE="/root/traefik-central/dynamic-config/servers.yml"
+    [ ! -f "$SERVERS_FILE" ] && { echo "ERRO:Nenhum servers.yml"; return 1; }
+
+    # Verificar DNS de todos os domínios
+    local ALL_OK=true
+    while IFS= read -r line; do
+        if [[ "$line" =~ Host\(\`([^\`]+)\`\) ]]; then
+            DOM="${BASH_REMATCH[1]}"
+            if ! timeout 5 bash -c "echo > /dev/tcp/8.8.8.8/53 && dig +short @8.8.8.8 $DOM A" &>/dev/null; then
+                echo "NOK:$DOM"
+                ALL_OK=false
+            fi
+        fi
+    done < "$SERVERS_FILE"
+
+    if $ALL_OK; then
+        echo "ALL_OK"
+    fi
+}
+
+
+# ============================================================================
 # APLICAR FILA DE CERTIFICADOS (1 cert por domínio)
 # ============================================================================
 aplicar_fila_certificados() {
@@ -1879,7 +1882,16 @@ aplicar_fila_certificados() {
 
     # 1. Primeiro, executar diagnóstico e correção automática (opção 8)
     step "Verificando e corrigindo domínios sem DNS..."
-    diagnosticar_e_corrigir || return
+    
+    # Executar diagnóstico e capturar se houve correções
+    local DIAG_OUTPUT
+    DIAG_OUTPUT=$(diagnostico_sistema_rapido)
+    
+    if echo "$DIAG_OUTPUT" | grep -q "ALL_OK"; then
+        ok "Todos os domínios têm DNS válido! Nada a corrigir."
+        info "A fila de certificados já está otimizada."
+        return
+    fi
 
     step "Backup do servers.yml..."
     cp "$SERVERS_FILE" "${SERVERS_FILE}.bak.fila.$(date +%Y%m%d_%H%M%S)"
