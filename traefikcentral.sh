@@ -993,13 +993,71 @@ PYREMOVE
     # Isso da a "fila" de emissoes independentes (um dominio problematico
     # nao bloqueia os demais, ex.: atras de Cloudflare).
     cat > /tmp/traefik_sync_domains.py << 'PYDOMAINS'
-import sys, re
+import sys, re, socket
+
 f = sys.argv[1]
 c = open(f).read()
+
+# 1. Extrair todos os domínios dos routers
+routers = {}
+for match in re.finditer(
+    r'    (\S+):\n      rule: "([^"]+)"', c, re.MULTILINE | re.DOTALL
+):
+    name = match.group(1)
+    if name.endswith('-svc') or name in ('insecure',):
+        continue
+    domains = re.findall(r'Host\(`([^`]+)`\)', match.group(2))
+    if domains:
+        routers[name] = sorted(set(domains))
+
+if not routers:
+    print("Nenhum router encontrado.")
+    sys.exit(0)
+
+# 2. Verificar DNS de todos os domínios
+bad_domains = {}
+for rname, doms in routers.items():
+    bad = []
+    for dom in doms:
+        try:
+            socket.getaddrinfo(dom, 80, socket.AF_INET)
+        except socket.gaierror:
+            bad.append(dom)
+    if bad:
+        bad_domains[rname] = bad
+
+# 3. Remover domínios sem DNS do servers.yml
+if bad_domains:
+    print("Domínios sem DNS detectados. Corrigindo...")
+    for rname, bad in bad_domains.items():
+        good = [d for d in routers[rname] if d not in bad]
+        if not good:
+            print(f"⚠ Router '{rname}' ficaria vazio. Removendo router...")
+            # Remover router inteiro
+            c = re.sub(
+                rf'    {re.escape(rname)}:.*?(?=\n    [a-zA-Z0-9_-]+:|\n  services:|\Z)',
+                '', c, flags=re.DOTALL
+            )
+            # Remover serviço correspondente
+            c = re.sub(
+                rf'    {re.escape(rname)}-svc:.*?(?=\n    [a-zA-Z0-9_-]+:|\n$)',
+                '', c, flags=re.DOTALL
+            )
+        else:
+            # Atualizar regra do router
+            new_rule = " || ".join(f"Host(`{d}`)" for d in good)
+            c = re.sub(
+                rf'(    {re.escape(rname)}:\n      rule: )"[^"]*"',
+                lambda m: f'{m.group(1)}"{new_rule}"', c
+            )
+            print(f"  ✔ Router '{rname}': removidos {len(bad)} domínio(s) sem DNS")
+
+# 4. Regenerar tls.domains
 block_re = re.compile(
-    r"^    ([a-zA-Z0-9_-]+):\n(.*?)(?=^    [a-zA-Z0-9_-]+:|^  services:|\Z)",
+    r'^    ([a-zA-Z0-9_-]+):\n(.*?)(?=^    [a-zA-Z0-9_-]+:|^  services:|\Z)',
     re.MULTILINE | re.DOTALL,
 )
+
 def fix(m):
     name, block = m.group(1), m.group(2)
     if "      rule:" not in block or "certResolver: letsencrypt" not in block:
@@ -1017,8 +1075,12 @@ def fix(m):
         return m.group(0)
     prefix = block[: idx + len(marker)]
     return f"    {name}:\n" + prefix + new_domains
+
 out = block_re.sub(fix, c)
 out = re.sub(r"(\n  services:)", r"\n\1", out, count=1)
+
+# 5. Salvar e limpar
+out = re.sub(r"\n{3,}", "\n\n", out)
 open(f, "w").write(out)
 print("tls.domains atualizado")
 PYDOMAINS
@@ -1751,6 +1813,10 @@ aplicar_fila_certificados() {
     local SERVERS_FILE="/root/traefik-central/dynamic-config/servers.yml"
     garantir_servers_yml
     criar_script_auxiliar
+
+    # 1. Primeiro, executar diagnóstico e correção automática (opção 8)
+    step "Verificando e corrigindo domínios sem DNS..."
+    diagnosticar_e_corrigir || return
 
     step "Backup do servers.yml..."
     cp "$SERVERS_FILE" "${SERVERS_FILE}.bak.fila.$(date +%Y%m%d_%H%M%S)"
