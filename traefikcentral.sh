@@ -997,7 +997,9 @@ PYREMOVE
     cat > /tmp/traefik_sync_domains.py << 'PYDOMAINS'
 import sys, re, socket
 
-f = sys.argv[1]
+flags = [a for a in sys.argv[1:] if a.startswith('--')]
+KEEP_ALL = '--keep-all' in flags
+f = [a for a in sys.argv[1:] if not a.startswith('--')][0]
 c = open(f).read()
 
 # 1. Extrair todos os domínios dos routers
@@ -1028,7 +1030,13 @@ for rname, doms in routers.items():
     if bad:
         bad_domains[rname] = bad
 
-# 3. Remover domínios sem DNS do servers.yml
+# 3. Remover domínios sem DNS do servers.yml (exceto com --keep-all)
+if bad_domains and KEEP_ALL:
+    print("Domínios sem DNS detectados (mantidos via --keep-all):")
+    for rname, bad in bad_domains.items():
+        for d in bad:
+            print(f"  ⚠ {d} (router '{rname}') — certificado sairá quando o DNS existir")
+    bad_domains = {}
 if bad_domains:
     print("Domínios sem DNS detectados. Corrigindo...")
     for rname, bad in bad_domains.items():
@@ -1183,6 +1191,9 @@ adicionar_servidor() {
         erro "IP inválido."
     done
 
+    read -p "  Porta HTTPS do destino [443]: " SERVER_PORT < /dev/tty
+    SERVER_PORT="${SERVER_PORT:-443}"
+
     read -p "  Testar conectividade? (S/n): " T < /dev/tty
     if [[ ! "$T" =~ ^[Nn]$ ]]; then
         if ! timeout 3 bash -c "</dev/tcp/$SERVER_IP/$SERVER_PORT" 2>/dev/null; then
@@ -1193,9 +1204,6 @@ adicionar_servidor() {
             ok "Porta $SERVER_PORT: OK"
         fi
     fi
-
-    read -p "  Porta HTTPS do destino [443]: " SERVER_PORT < /dev/tty
-    SERVER_PORT="${SERVER_PORT:-443}"
 
     ALL_DOMAINS=()
     echo -e "\n  ${WHITE}O Central gera os certificados. Informe todos os domínios deste servidor.${NC}\n"
@@ -1224,23 +1232,26 @@ adicionar_servidor() {
         [[ "$M" =~ ^[Ss]$ ]] || break
     done
 
-    # Verificar DNS de todos os domínios antes de prosseguir
-    INVALID_DOMAINS=()
+    # Verificar DNS dos domínios (avisa, não bloqueia — o subdomínio pode
+    # ser criado no DNS depois; o Traefik emite o cert quando existir)
+    step "Verificando DNS dos domínios..."
+    DOMS_SEM_DNS=()
     for dom in "${ALL_DOMAINS[@]}"; do
-        if ! timeout 5 bash -c "echo > /dev/tcp/8.8.8.8/53 && dig +short @8.8.8.8 $dom A" &>/dev/null; then
-            INVALID_DOMAINS+=("$dom")
+        if ! python3 -c "import socket,sys; socket.getaddrinfo(sys.argv[1], None)" "$dom" 2>/dev/null; then
+            DOMS_SEM_DNS+=("$dom")
         fi
     done
 
-    if [ ${#INVALID_DOMAINS[@]} -gt 0 ]; then
-        erro "Os seguintes domínios não têm DNS válido:"
-        for dom in "${INVALID_DOMAINS[@]}"; do
-            erro "  ✖ $dom"
+    if [ ${#DOMS_SEM_DNS[@]} -gt 0 ]; then
+        warn "Domínios SEM DNS público válido no momento:"
+        for dom in "${DOMS_SEM_DNS[@]}"; do
+            warn "  ⚠ $dom"
         done
-        erro "Corrija o DNS antes de adicionar o servidor."
-        return
+        warn "Serão adicionados mesmo assim, mas o certificado Let's Encrypt"
+        warn "só será emitido quando o DNS existir. (Opção 8 revalida depois.)"
+    else
+        ok "Todos os domínios têm DNS válido."
     fi
-    ok "Todos os domínios têm DNS válido."
 
     RULE=""
     for dom in "${ALL_DOMAINS[@]}"; do
@@ -1260,9 +1271,8 @@ adicionar_servidor() {
     limpar_backups
     python3 /tmp/traefik_add.py "$SERVERS_FILE" "$SERVER_NAME" "$SERVER_IP" \
             "$SERVER_PORT" "$RULE"
-        python3 /tmp/traefik_sync_domains.py "$SERVERS_FILE"
-
-        ok "Servidor '${SERVER_NAME}' adicionado com ${#ALL_DOMAINS[@]} domínio(s)!"
+    python3 /tmp/traefik_sync_domains.py --keep-all "$SERVERS_FILE"
+    ok "Servidor '${SERVER_NAME}' adicionado com ${#ALL_DOMAINS[@]} domínio(s)!"
     sincronizar_certificados
 }
 
@@ -1493,6 +1503,22 @@ for b in sorted(bases): print(b)
     done
     [ ${#ADDED[@]} -eq 0 ] && { warn "Já existem."; return; }
 
+    # Verificar DNS dos novos domínios (avisa, não bloqueia)
+    step "Verificando DNS dos novos domínios..."
+    ADDED_SEM_DNS=()
+    for dom in "${ADDED[@]}"; do
+        if ! python3 -c "import socket,sys; socket.getaddrinfo(sys.argv[1], None)" "$dom" 2>/dev/null; then
+            ADDED_SEM_DNS+=("$dom")
+        fi
+    done
+    if [ ${#ADDED_SEM_DNS[@]} -gt 0 ]; then
+        warn "Domínios SEM DNS público válido no momento:"
+        for dom in "${ADDED_SEM_DNS[@]}"; do warn "  ⚠ $dom"; done
+        warn "Serão adicionados, mas o certificado só sai quando o DNS existir."
+    else
+        ok "Todos os novos domínios têm DNS válido."
+    fi
+
     ALL_FINAL=("${EXISTING_DOMS[@]}" "${ADDED[@]}")
     echo -e "\n  ${GREEN}Adicionando:${NC}"; for d in "${ADDED[@]}"; do ok "  $d"; done
 
@@ -1514,7 +1540,7 @@ c = open(f).read()
 c = re.sub(rf'(    {re.escape(s)}:\n      rule: )"[^"]*"', lambda m: f'{m.group(1)}"{r}"', c)
 open(f, 'w').write(c); print("OK")
 PY
-    python3 /tmp/traefik_sync_domains.py "$SERVERS_FILE"
+    python3 /tmp/traefik_sync_domains.py --keep-all "$SERVERS_FILE"
     ok "Domínios adicionados!"; sincronizar_certificados
 }
 
@@ -1830,7 +1856,7 @@ listar_dominios_sem_dns() {
     while IFS= read -r line; do
         if [[ "$line" =~ Host\(\`([^\`]+)\`\) ]]; then
             DOM="${BASH_REMATCH[1]}"
-            if ! timeout 5 bash -c "echo > /dev/tcp/8.8.8.8/53 && dig +short @8.8.8.8 $DOM A" &>/dev/null; then
+            if ! python3 -c "import socket,sys; socket.getaddrinfo(sys.argv[1], None)" "$DOM" 2>/dev/null; then
                 erro "$DOM → sem DNS (NXDOMAIN)"
                 HAS_INVALID=1
             else
@@ -1858,7 +1884,7 @@ diagnostico_sistema_rapido() {
     while IFS= read -r line; do
         if [[ "$line" =~ Host\(\`([^\`]+)\`\) ]]; then
             DOM="${BASH_REMATCH[1]}"
-            if ! timeout 5 bash -c "echo > /dev/tcp/8.8.8.8/53 && dig +short @8.8.8.8 $DOM A" &>/dev/null; then
+            if ! python3 -c "import socket,sys; socket.getaddrinfo(sys.argv[1], None)" "$DOM" 2>/dev/null; then
                 echo "NOK:$DOM"
                 ALL_OK=false
             fi
